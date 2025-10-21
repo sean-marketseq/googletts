@@ -196,3 +196,21 @@ class PineconeClient:
             namespace=namespace
         )
         print(f"Deleted conversation: {conversation_id}")
+
+    def purge_all_data(self, namespace: str = "conversations"):
+        """
+        Delete ALL data from a namespace (use with caution!)
+
+        Args:
+            namespace: Pinecone namespace to purge
+        """
+        if not self.index:
+            raise ValueError("Index not initialized. Call setup_index() first.")
+
+        print(f"⚠️  PURGING ALL DATA from namespace: {namespace}")
+
+        # Delete all vectors in the namespace
+        self.index.delete(delete_all=True, namespace=namespace)
+
+        print(f"✓ All data purged from namespace: {namespace}")
+

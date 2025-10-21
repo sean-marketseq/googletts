@@ -407,6 +407,33 @@ async def get_all_batches():
     }
 
 
+@app.delete("/purge-index")
+async def purge_index():
+    """
+    ⚠️ DANGER: Delete ALL data from Pinecone index
+
+    This is for testing purposes only. Use with caution!
+    """
+    try:
+        print("⚠️  PURGE REQUEST RECEIVED")
+
+        # Purge all data from Pinecone
+        pinecone_client.purge_all_data(namespace="conversations")
+
+        # Clear in-memory batch storage
+        batch_storage.clear()
+
+        return {
+            "message": "All data purged successfully",
+            "namespace": "conversations",
+            "batches_cleared": True
+        }
+
+    except Exception as e:
+        print(f"Error purging index: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to purge index: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -138,6 +138,14 @@ export const conversationApi = {
     const response = await api.get('/');
     return response.data;
   },
+
+  /**
+   * Purge all data from index (DANGER - for testing only!)
+   */
+  purgeIndex: async (): Promise<any> => {
+    const response = await api.delete('/purge-index');
+    return response.data;
+  },
 };
 
 export default conversationApi;
