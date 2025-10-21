@@ -111,28 +111,49 @@ async def upload_conversation(conversation: ConversationUpload):
         chunks = chunk_text(conversation.transcript, max_tokens=1500, overlap=200)
         print(f"Created {len(chunks)} chunks")
 
-        # Step 2: Create batch requests
+        # Step 2: Create batch requests (returns dict with separate embeddings/extractions)
         batch_requests = create_batch_requests(
             conversation_id=conversation.id,
             chunks=chunks,
             metadata=conversation.metadata
         )
-        print(f"Created {len(batch_requests)} batch requests")
+        embedding_count = len(batch_requests["embeddings"])
+        extraction_count = len(batch_requests["extractions"])
+        print(f"Created {embedding_count} embedding requests and {extraction_count} extraction requests")
 
-        # Step 3: Submit to OpenAI Batch API
-        batch_id = openai_client.submit_batch(batch_requests)
+        # Step 3: Submit TWO separate batches (OpenAI requires same endpoint per batch)
+        embedding_batch_id = openai_client.submit_batch(
+            batch_requests["embeddings"],
+            endpoint="/v1/embeddings"
+        )
+        extraction_batch_id = openai_client.submit_batch(
+            batch_requests["extractions"],
+            endpoint="/v1/chat/completions"
+        )
 
-        # Step 4: Store batch info
-        batch_storage[batch_id] = {
+        # Step 4: Store both batch infos with cross-references
+        batch_storage[embedding_batch_id] = {
             "conversation_id": conversation.id,
             "status": "submitted",
             "chunks": chunks,
             "metadata": conversation.metadata,
-            "total_chunks": len(chunks)
+            "total_chunks": len(chunks),
+            "type": "embeddings",
+            "paired_batch_id": extraction_batch_id
+        }
+        batch_storage[extraction_batch_id] = {
+            "conversation_id": conversation.id,
+            "status": "submitted",
+            "chunks": chunks,
+            "metadata": conversation.metadata,
+            "total_chunks": len(chunks),
+            "type": "extractions",
+            "paired_batch_id": embedding_batch_id
         }
 
+        # Return embedding batch_id as primary (client will poll this one)
         return UploadResponse(
-            batch_id=batch_id,
+            batch_id=embedding_batch_id,
             status="submitted",
             chunks=len(chunks),
             conversation_id=conversation.id
@@ -193,30 +214,53 @@ async def upload_audio(
         chunks = chunk_text(transcript, max_tokens=1500, overlap=200)
         print(f"Created {len(chunks)} chunks")
 
-        # Step 3: Create batch requests
+        # Step 3: Create batch requests (returns dict with separate embeddings/extractions)
         batch_requests = create_batch_requests(
             conversation_id=conversation_id,
             chunks=chunks,
             metadata=metadata_dict
         )
-        print(f"Created {len(batch_requests)} batch requests")
+        embedding_count = len(batch_requests["embeddings"])
+        extraction_count = len(batch_requests["extractions"])
+        print(f"Created {embedding_count} embedding requests and {extraction_count} extraction requests")
 
-        # Step 4: Submit to OpenAI Batch API
-        batch_id = openai_client.submit_batch(batch_requests)
+        # Step 4: Submit TWO separate batches (OpenAI requires same endpoint per batch)
+        embedding_batch_id = openai_client.submit_batch(
+            batch_requests["embeddings"],
+            endpoint="/v1/embeddings"
+        )
+        extraction_batch_id = openai_client.submit_batch(
+            batch_requests["extractions"],
+            endpoint="/v1/chat/completions"
+        )
 
-        # Step 5: Store batch info
-        batch_storage[batch_id] = {
+        # Step 5: Store both batch infos with cross-references
+        batch_storage[embedding_batch_id] = {
             "conversation_id": conversation_id,
             "status": "submitted",
             "chunks": chunks,
             "metadata": metadata_dict,
             "total_chunks": len(chunks),
             "source": "audio",
-            "filename": file.filename
+            "filename": file.filename,
+            "type": "embeddings",
+            "paired_batch_id": extraction_batch_id
+        }
+        batch_storage[extraction_batch_id] = {
+            "conversation_id": conversation_id,
+            "status": "submitted",
+            "chunks": chunks,
+            "metadata": metadata_dict,
+            "total_chunks": len(chunks),
+            "source": "audio",
+            "filename": file.filename,
+            "type": "extractions",
+            "paired_batch_id": embedding_batch_id
         }
 
+        # Return embedding batch_id as primary (client will poll this one)
         return UploadResponse(
-            batch_id=batch_id,
+            batch_id=embedding_batch_id,
             status="submitted",
             chunks=len(chunks),
             conversation_id=conversation_id
@@ -236,7 +280,8 @@ async def get_batch_status(batch_id: str):
     """
     Check status of a batch job
 
-    If completed, process results and upsert to Pinecone
+    Since we now submit TWO batches (embeddings + extractions),
+    we wait for BOTH to complete before processing results
     """
     try:
         # Check if batch_id exists in our storage
@@ -244,24 +289,46 @@ async def get_batch_status(batch_id: str):
             raise HTTPException(status_code=404, detail=f"Batch {batch_id} not found")
 
         stored_info = batch_storage[batch_id]
+        paired_batch_id = stored_info.get("paired_batch_id")
 
-        # Check status with OpenAI
+        # Check status of the requested batch
         batch_status = openai_client.check_batch(batch_id)
-
-        # Update our storage
         stored_info["status"] = batch_status["status"]
 
-        # Calculate progress
-        request_counts = batch_status["request_counts"]
-        progress = f"{request_counts['completed']}/{request_counts['total']} requests"
+        # Also check the paired batch if it exists
+        paired_batch_status = None
+        if paired_batch_id and paired_batch_id in batch_storage:
+            paired_batch_status = openai_client.check_batch(paired_batch_id)
+            batch_storage[paired_batch_id]["status"] = paired_batch_status["status"]
 
-        # If completed, process results
-        if batch_status["status"] == "completed" and stored_info.get("processed") != True:
-            print(f"Batch {batch_id} completed, processing results...")
+        # Calculate combined progress
+        request_counts = batch_status["request_counts"]
+        if paired_batch_status:
+            paired_counts = paired_batch_status["request_counts"]
+            total_completed = request_counts['completed'] + paired_counts['completed']
+            total_requests = request_counts['total'] + paired_counts['total']
+            progress = f"{total_completed}/{total_requests} requests (embeddings + extractions)"
+        else:
+            progress = f"{request_counts['completed']}/{request_counts['total']} requests"
+
+        # Only process if BOTH batches are completed
+        both_completed = (
+            batch_status["status"] == "completed" and
+            (not paired_batch_status or paired_batch_status["status"] == "completed")
+        )
+
+        if both_completed and stored_info.get("processed") != True:
+            print(f"Both batches completed for {stored_info['conversation_id']}, processing results...")
 
             try:
-                # Get results from OpenAI
+                # Get results from BOTH batches
                 results = openai_client.get_results(batch_id)
+
+                if paired_batch_id:
+                    paired_results = openai_client.get_results(paired_batch_id)
+                    # Combine results from both batches
+                    results.extend(paired_results)
+                    print(f"Combined {len(results)} results from both batches")
 
                 # Parse and combine results
                 pinecone_records = parse_batch_results(
@@ -277,20 +344,36 @@ async def get_batch_status(batch_id: str):
                     namespace="conversations"
                 )
 
-                # Mark as processed
+                # Mark BOTH batches as processed
                 stored_info["processed"] = True
                 stored_info["status"] = "completed_and_stored"
+
+                if paired_batch_id and paired_batch_id in batch_storage:
+                    batch_storage[paired_batch_id]["processed"] = True
+                    batch_storage[paired_batch_id]["status"] = "completed_and_stored"
 
                 print(f"Successfully stored {len(pinecone_records)} records in Pinecone")
 
             except Exception as e:
                 print(f"Error processing batch results: {e}")
+                import traceback
+                traceback.print_exc()
                 stored_info["status"] = "processing_failed"
                 stored_info["error"] = str(e)
 
+        # Determine overall status to return
+        if stored_info.get("processed"):
+            overall_status = "completed_and_stored"
+        elif both_completed:
+            overall_status = "completed"
+        elif batch_status["status"] == "failed" or (paired_batch_status and paired_batch_status["status"] == "failed"):
+            overall_status = "failed"
+        else:
+            overall_status = "processing"
+
         return StatusResponse(
             batch_id=batch_id,
-            status=stored_info["status"],
+            status=overall_status,
             progress=progress,
             conversation_id=stored_info["conversation_id"],
             details=batch_status
@@ -300,6 +383,8 @@ async def get_batch_status(batch_id: str):
         raise
     except Exception as e:
         print(f"Error checking batch status: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to check status: {str(e)}")
 
 

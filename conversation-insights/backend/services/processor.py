@@ -58,9 +58,11 @@ def chunk_text(text: str, max_tokens: int = 1500, overlap: int = 200) -> List[Di
     return chunks
 
 
-def create_batch_requests(conversation_id: str, chunks: List[Dict[str, Any]], metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+def create_batch_requests(conversation_id: str, chunks: List[Dict[str, Any]], metadata: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     """
     Create OpenAI Batch API request format for embeddings and extraction
+
+    Returns separate lists since OpenAI Batch API requires same endpoint per batch
 
     Args:
         conversation_id: Unique conversation identifier
@@ -68,9 +70,10 @@ def create_batch_requests(conversation_id: str, chunks: List[Dict[str, Any]], me
         metadata: Conversation metadata (account_id, date, agent_id, etc.)
 
     Returns:
-        List of batch request objects in OpenAI format
+        Dict with 'embeddings' and 'extractions' lists of batch requests
     """
-    requests = []
+    embedding_requests = []
+    extraction_requests = []
 
     # Extraction prompt template
     extraction_prompt = """Extract from this conversation chunk:
@@ -96,7 +99,7 @@ Conversation chunk:
         chunk_id = f"{conversation_id}_chunk_{chunk['index']}"
 
         # 1. Embedding request
-        requests.append({
+        embedding_requests.append({
             "custom_id": f"embed_{chunk_id}",
             "method": "POST",
             "url": "/v1/embeddings",
@@ -107,7 +110,7 @@ Conversation chunk:
         })
 
         # 2. Extraction request
-        requests.append({
+        extraction_requests.append({
             "custom_id": f"extract_{chunk_id}",
             "method": "POST",
             "url": "/v1/chat/completions",
@@ -128,7 +131,10 @@ Conversation chunk:
             }
         })
 
-    return requests
+    return {
+        "embeddings": embedding_requests,
+        "extractions": extraction_requests
+    }
 
 
 def parse_batch_results(results: List[Dict[str, Any]], conversation_id: str, chunks: List[Dict[str, Any]], metadata: Dict[str, Any]) -> List[Dict[str, Any]]:

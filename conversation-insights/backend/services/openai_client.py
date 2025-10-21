@@ -20,12 +20,13 @@ class OpenAIBatchClient:
         """
         self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
 
-    def submit_batch(self, requests: List[Dict[str, Any]]) -> str:
+    def submit_batch(self, requests: List[Dict[str, Any]], endpoint: str = "/v1/embeddings") -> str:
         """
         Submit a batch job to OpenAI
 
         Args:
             requests: List of batch request objects in OpenAI format
+            endpoint: The API endpoint for this batch (all requests must use same endpoint)
 
         Returns:
             batch_id: Unique identifier for the batch job
@@ -47,11 +48,11 @@ class OpenAIBatchClient:
             # Create the batch job
             batch = self.client.batches.create(
                 input_file_id=batch_input_file.id,
-                endpoint="/v1/embeddings",  # This is set generically; the actual endpoint is in each request
+                endpoint=endpoint,
                 completion_window="24h"
             )
 
-            print(f"Batch submitted: {batch.id}")
+            print(f"Batch submitted ({endpoint}): {batch.id}")
             return batch.id
 
         finally:
