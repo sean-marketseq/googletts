@@ -1,0 +1,11 @@
+{
+  "id": "conv_001",
+  "transcript": "Agent: Good morning! Thank you for calling customer support. How can I help you today?\n\nCustomer: Hi, I want to cancel my subscription. I've been thinking about this for a while now.\n\nAgent: I'm sorry to hear that you're considering cancellation. I'd be happy to help you with that. Before we proceed, may I ask what's prompting you to cancel? Your feedback is really valuable to us.\n\nCustomer: Well, honestly, it's just too expensive for what I'm getting. I'm trying to cut down on my monthly expenses.\n\nAgent: I completely understand. Budget concerns are completely valid. Let me see what options we have available. I notice you've been with us for over a year now - let me check if there are any loyalty discounts or promotional rates I can offer you.\n\nCustomer: Oh, that would be great if there's something available.\n\nAgent: Good news! I can offer you a 40% discount for the next three months. That would bring your monthly cost down from $50 to $30. Would that help with your budget concerns?\n\nCustomer: Wow, that's actually a really good deal. Yes, I think that would work for me. Let me give it another try at that price.\n\nAgent: Excellent! I'm so glad we could find a solution that works for you. I'm applying that discount to your account right now. You'll see the reduced rate on your next billing cycle. Is there anything else I can help you with today?\n\nCustomer: No, that's all. Thank you so much for working with me on this!\n\nAgent: You're very welcome! We really appreciate your loyalty. If you have any other questions or concerns in the future, please don't hesitate to reach out. Have a wonderful day!",
+  "metadata": {
+    "account_id": "acct_123",
+    "date": "2025-10-20",
+    "agent_id": "agent_5",
+    "customer_name": "John Doe",
+    "duration_seconds": 420
+  }
+}
