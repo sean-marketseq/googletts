@@ -131,11 +131,12 @@ class OpenAIBatchClient:
             model: Embedding model to use
 
         Returns:
-            Embedding vector
+            Embedding vector (1024 dimensions)
         """
         response = self.client.embeddings.create(
             model=model,
-            input=text
+            input=text,
+            dimensions=1024
         )
         return response.data[0].embedding
 

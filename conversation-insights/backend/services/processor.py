@@ -105,7 +105,8 @@ Conversation chunk:
             "url": "/v1/embeddings",
             "body": {
                 "model": "text-embedding-3-small",
-                "input": chunk["text"]
+                "input": chunk["text"],
+                "dimensions": 1024
             }
         })
 

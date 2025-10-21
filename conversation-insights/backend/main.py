@@ -76,7 +76,7 @@ async def startup_event():
     """Initialize Pinecone index on startup"""
     try:
         print("Initializing Pinecone index...")
-        pinecone_client.setup_index(dimension=1536, metric="cosine")
+        pinecone_client.setup_index(dimension=1024, metric="cosine")
         print("Pinecone index ready")
     except Exception as e:
         print(f"Error initializing Pinecone: {e}")
