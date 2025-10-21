@@ -39,7 +39,7 @@ function App() {
   const [isQuerying, setIsQuerying] = useState(false);
 
   // Polling interval ref
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<number | null>(null);
 
   // Poll batch status
   const pollStatus = async (batchId: string) => {
@@ -91,7 +91,6 @@ function App() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      const allowedTypes = ['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/wav', 'audio/m4a', 'audio/x-m4a', 'audio/webm'];
       const allowedExtensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm'];
 
       const fileExt = selectedFile.name.toLowerCase().slice(selectedFile.name.lastIndexOf('.'));
