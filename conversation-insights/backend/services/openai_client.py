@@ -2,7 +2,7 @@
 OpenAI Batch API wrapper for conversation processing
 """
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, BinaryIO
 import json
 import tempfile
 from openai import OpenAI
@@ -180,3 +180,25 @@ Please provide a clear, well-structured answer."""
         )
 
         return response.choices[0].message.content
+
+    def transcribe_audio(self, audio_file: BinaryIO, filename: str) -> str:
+        """
+        Transcribe audio file using OpenAI Whisper API
+
+        Args:
+            audio_file: Binary file object of the audio
+            filename: Original filename (used for format detection)
+
+        Returns:
+            Transcribed text
+        """
+        print(f"Transcribing audio file: {filename}")
+
+        response = self.client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(filename, audio_file),
+            response_format="text"
+        )
+
+        print(f"Transcription complete: {len(response)} characters")
+        return response

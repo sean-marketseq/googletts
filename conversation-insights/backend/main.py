@@ -143,6 +143,94 @@ async def upload_conversation(conversation: ConversationUpload):
         raise HTTPException(status_code=500, detail=f"Failed to process conversation: {str(e)}")
 
 
+@app.post("/upload-audio", response_model=UploadResponse)
+async def upload_audio(
+    file: UploadFile = File(...),
+    conversation_id: str = None,
+    metadata: str = "{}"
+):
+    """
+    Upload and process an audio file
+
+    Steps:
+    1. Transcribe audio with Whisper API
+    2. Chunk the transcript
+    3. Create batch requests for OpenAI (embeddings + extraction)
+    4. Submit to OpenAI Batch API
+    5. Store batch_id and return immediately
+    """
+    try:
+        # Validate file type
+        allowed_extensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm']
+        file_ext = os.path.splitext(file.filename)[1].lower()
+
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
+            )
+
+        # Generate conversation ID if not provided
+        if not conversation_id:
+            import uuid
+            conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
+
+        # Parse metadata
+        try:
+            metadata_dict = json.loads(metadata)
+        except:
+            metadata_dict = {}
+
+        print(f"Processing audio file: {file.filename} for conversation: {conversation_id}")
+
+        # Step 1: Transcribe audio
+        audio_content = await file.read()
+        transcript = openai_client.transcribe_audio(audio_content, file.filename)
+
+        print(f"Transcription complete: {len(transcript)} characters")
+
+        # Step 2: Chunk the transcript
+        chunks = chunk_text(transcript, max_tokens=1500, overlap=200)
+        print(f"Created {len(chunks)} chunks")
+
+        # Step 3: Create batch requests
+        batch_requests = create_batch_requests(
+            conversation_id=conversation_id,
+            chunks=chunks,
+            metadata=metadata_dict
+        )
+        print(f"Created {len(batch_requests)} batch requests")
+
+        # Step 4: Submit to OpenAI Batch API
+        batch_id = openai_client.submit_batch(batch_requests)
+
+        # Step 5: Store batch info
+        batch_storage[batch_id] = {
+            "conversation_id": conversation_id,
+            "status": "submitted",
+            "chunks": chunks,
+            "metadata": metadata_dict,
+            "total_chunks": len(chunks),
+            "source": "audio",
+            "filename": file.filename
+        }
+
+        return UploadResponse(
+            batch_id=batch_id,
+            status="submitted",
+            chunks=len(chunks),
+            conversation_id=conversation_id
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error processing audio: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to process audio: {str(e)}")
+
+
 @app.get("/status/{batch_id}", response_model=StatusResponse)
 async def get_batch_status(batch_id: str):
     """

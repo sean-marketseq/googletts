@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import conversationApi, { QueryResponse, Source } from './api';
+import conversationApi from './api';
 
 interface UploadStatus {
   batchId: string;
@@ -7,6 +7,22 @@ interface UploadStatus {
   status: string;
   progress: string;
   isPolling: boolean;
+  filename: string;
+}
+
+interface QueryResponse {
+  answer: string;
+  sources: Source[];
+  processing_time_ms: number;
+}
+
+interface Source {
+  conversation_id: string;
+  date: string;
+  score: number;
+  text: string;
+  sentiment: number;
+  intents: string[];
 }
 
 function App() {
@@ -75,10 +91,16 @@ function App() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      if (selectedFile.type !== 'application/json') {
-        setUploadError('Please select a JSON file');
+      const allowedTypes = ['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/wav', 'audio/m4a', 'audio/x-m4a', 'audio/webm'];
+      const allowedExtensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm'];
+
+      const fileExt = selectedFile.name.toLowerCase().slice(selectedFile.name.lastIndexOf('.'));
+
+      if (!allowedExtensions.includes(fileExt)) {
+        setUploadError(`Please select an audio file (${allowedExtensions.join(', ')})`);
         return;
       }
+
       setFile(selectedFile);
       setUploadError('');
     }
@@ -95,41 +117,24 @@ function App() {
     setUploadError('');
 
     try {
-      // Read file content
-      const fileContent = await file.text();
-      const conversation = JSON.parse(fileContent);
+      const response = await conversationApi.uploadAudio(file);
 
-      // Validate structure
-      if (!conversation.id || !conversation.transcript) {
-        setUploadError('Invalid conversation format. Must have "id" and "transcript" fields.');
-        setIsUploading(false);
-        return;
-      }
-
-      // Upload
-      const response = await conversationApi.upload({
-        id: conversation.id,
-        transcript: conversation.transcript,
-        metadata: conversation.metadata || {}
-      });
-
-      // Set upload status and start polling
       setUploadStatus({
         batchId: response.batch_id,
         conversationId: response.conversation_id,
         status: response.status,
         progress: `0/${response.chunks} chunks`,
-        isPolling: true
+        isPolling: true,
+        filename: file.name
       });
 
       setFile(null);
-      // Reset file input
       const fileInput = document.getElementById('file-upload') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
 
     } catch (error: any) {
       console.error('Upload error:', error);
-      setUploadError(error.response?.data?.detail || 'Failed to upload conversation');
+      setUploadError(error.response?.data?.detail || 'Failed to upload audio file');
     } finally {
       setIsUploading(false);
     }
@@ -164,228 +169,318 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="container mx-auto px-4 py-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+      <div className="container mx-auto px-4 py-12">
         {/* Header */}
-        <header className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">
+        <header className="text-center mb-16">
+          <h1 className="text-6xl font-bold text-white mb-4 tracking-tight">
             Conversation Insights
           </h1>
-          <p className="text-gray-600">
-            Upload conversations and query them with AI-powered insights
+          <p className="text-xl text-purple-200">
+            Upload audio conversations and search them with AI
           </p>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-7xl mx-auto">
-          {/* Upload Section */}
-          <div className="bg-white rounded-lg shadow-lg p-6">
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-              Upload Conversation
-            </h2>
+        {/* Two Column Layout */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 max-w-7xl mx-auto">
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Select JSON File
-              </label>
-              <input
-                id="file-upload"
-                type="file"
-                accept=".json"
-                onChange={handleFileChange}
-                className="block w-full text-sm text-gray-500
-                  file:mr-4 file:py-2 file:px-4
-                  file:rounded-md file:border-0
-                  file:text-sm file:font-semibold
-                  file:bg-indigo-50 file:text-indigo-700
-                  hover:file:bg-indigo-100
-                  cursor-pointer"
-              />
-              {file && (
-                <p className="mt-2 text-sm text-gray-600">
-                  Selected: {file.name}
-                </p>
-              )}
+          {/* LEFT SIDE: Add to Index */}
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/20 p-8">
+            <div className="flex items-center justify-center mb-6">
+              <div className="bg-gradient-to-r from-blue-500 to-purple-500 rounded-full p-3 mr-4">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+              </div>
+              <h2 className="text-3xl font-bold text-white">
+                Add to Index
+              </h2>
             </div>
 
-            <button
-              onClick={handleUpload}
-              disabled={!file || isUploading}
-              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md
-                hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed
-                transition-colors duration-200 font-medium"
-            >
-              {isUploading ? 'Uploading...' : 'Upload & Process'}
-            </button>
+            <p className="text-purple-200 text-center mb-8">
+              Upload audio files to transcribe and index for searching
+            </p>
 
-            {uploadError && (
-              <div className="mt-4 p-3 bg-red-100 border border-red-300 rounded-md text-red-700 text-sm">
-                {uploadError}
-              </div>
-            )}
-
-            {uploadStatus && (
-              <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
-                <h3 className="font-semibold text-blue-900 mb-2">
-                  Processing Status
-                </h3>
-                <div className="space-y-2 text-sm">
-                  <p>
-                    <span className="font-medium">Batch ID:</span>{' '}
-                    <span className="font-mono text-xs">{uploadStatus.batchId}</span>
-                  </p>
-                  <p>
-                    <span className="font-medium">Conversation:</span>{' '}
-                    {uploadStatus.conversationId}
-                  </p>
-                  <p>
-                    <span className="font-medium">Status:</span>{' '}
-                    <span className={`px-2 py-1 rounded ${
-                      uploadStatus.status === 'completed_and_stored'
-                        ? 'bg-green-200 text-green-800'
-                        : uploadStatus.status === 'processing_failed'
-                        ? 'bg-red-200 text-red-800'
-                        : 'bg-yellow-200 text-yellow-800'
-                    }`}>
-                      {uploadStatus.status}
-                    </span>
-                  </p>
-                  <p>
-                    <span className="font-medium">Progress:</span>{' '}
-                    {uploadStatus.progress}
-                  </p>
-                  {uploadStatus.isPolling && (
-                    <div className="flex items-center text-blue-600 mt-2">
-                      <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full mr-2"></div>
-                      Checking status...
-                    </div>
-                  )}
+            <div className="space-y-6">
+              {/* File Input */}
+              <div>
+                <label className="block text-sm font-semibold text-purple-200 mb-3">
+                  Select Audio File
+                </label>
+                <div className="relative">
+                  <input
+                    id="file-upload"
+                    type="file"
+                    accept=".mp3,.wav,.m4a,.mp4,.mpeg,.mpga,.webm,audio/*"
+                    onChange={handleFileChange}
+                    className="block w-full text-sm text-purple-200
+                      file:mr-4 file:py-3 file:px-6
+                      file:rounded-full file:border-0
+                      file:text-sm file:font-semibold
+                      file:bg-gradient-to-r file:from-blue-500 file:to-purple-500
+                      file:text-white
+                      hover:file:from-blue-600 hover:file:to-purple-600
+                      file:cursor-pointer
+                      cursor-pointer
+                      bg-white/5 rounded-lg p-3 border border-white/20"
+                  />
                 </div>
+                {file && (
+                  <div className="mt-3 p-3 bg-green-500/20 border border-green-400/30 rounded-lg">
+                    <p className="text-sm text-green-200 flex items-center">
+                      <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
+                        <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd"/>
+                      </svg>
+                      Selected: {file.name}
+                    </p>
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-purple-300">
+                  Supported formats: MP3, WAV, M4A, MP4, MPEG, WebM
+                </p>
               </div>
-            )}
 
-            <div className="mt-6 p-4 bg-gray-50 rounded-md text-sm text-gray-600">
-              <p className="font-medium mb-2">Expected JSON format:</p>
-              <pre className="text-xs overflow-x-auto">
-{`{
-  "id": "conv_001",
-  "transcript": "...",
-  "metadata": {
-    "account_id": "acct_123",
-    "date": "2025-10-20"
-  }
-}`}
-              </pre>
+              {/* Upload Button */}
+              <button
+                onClick={handleUpload}
+                disabled={!file || isUploading}
+                className="w-full bg-gradient-to-r from-blue-500 to-purple-500 text-white py-4 px-6 rounded-xl
+                  hover:from-blue-600 hover:to-purple-600
+                  disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed
+                  transition-all duration-200 font-bold text-lg shadow-lg
+                  transform hover:scale-105 disabled:transform-none"
+              >
+                {isUploading ? (
+                  <span className="flex items-center justify-center">
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Transcribing & Processing...
+                  </span>
+                ) : 'Upload & Add to Index'}
+              </button>
+
+              {/* Upload Error */}
+              {uploadError && (
+                <div className="p-4 bg-red-500/20 border border-red-400/30 rounded-xl text-red-200 text-sm">
+                  {uploadError}
+                </div>
+              )}
+
+              {/* Upload Status */}
+              {uploadStatus && (
+                <div className="p-6 bg-blue-500/20 border border-blue-400/30 rounded-xl space-y-3">
+                  <h3 className="font-bold text-blue-100 text-lg flex items-center">
+                    <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
+                    </svg>
+                    Processing Status
+                  </h3>
+                  <div className="space-y-2 text-sm">
+                    <p className="text-blue-200">
+                      <span className="font-semibold">File:</span> {uploadStatus.filename}
+                    </p>
+                    <p className="text-blue-200">
+                      <span className="font-semibold">Conversation ID:</span> {uploadStatus.conversationId}
+                    </p>
+                    <p className="text-blue-200 flex items-center justify-between">
+                      <span>
+                        <span className="font-semibold">Status:</span>
+                        <span className={`ml-2 px-3 py-1 rounded-full text-xs font-bold ${
+                          uploadStatus.status === 'completed_and_stored'
+                            ? 'bg-green-500 text-white'
+                            : uploadStatus.status === 'processing_failed'
+                            ? 'bg-red-500 text-white'
+                            : 'bg-yellow-500 text-gray-900'
+                        }`}>
+                          {uploadStatus.status.replace(/_/g, ' ').toUpperCase()}
+                        </span>
+                      </span>
+                    </p>
+                    <p className="text-blue-200">
+                      <span className="font-semibold">Progress:</span> {uploadStatus.progress}
+                    </p>
+                    {uploadStatus.isPolling && (
+                      <div className="flex items-center text-blue-300 mt-3 pt-3 border-t border-blue-400/30">
+                        <div className="animate-spin h-4 w-4 border-2 border-blue-400 border-t-transparent rounded-full mr-2"></div>
+                        Checking status every 5 seconds...
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Query Section */}
-          <div className="bg-white rounded-lg shadow-lg p-6">
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-              Query Conversations
-            </h2>
+          {/* RIGHT SIDE: Search Index */}
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/20 p-8">
+            <div className="flex items-center justify-center mb-6">
+              <div className="bg-gradient-to-r from-green-500 to-emerald-500 rounded-full p-3 mr-4">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <h2 className="text-3xl font-bold text-white">
+                Search Index
+              </h2>
+            </div>
 
-            <form onSubmit={handleQuery} className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Ask a question
-              </label>
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="e.g., What are the main reasons customers want to cancel?"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md
-                  focus:outline-none focus:ring-2 focus:ring-indigo-500
-                  resize-none"
-                rows={3}
-              />
+            <p className="text-purple-200 text-center mb-8">
+              Ask questions about your indexed conversations
+            </p>
+
+            <form onSubmit={handleQuery} className="space-y-6">
+              <div>
+                <label className="block text-sm font-semibold text-purple-200 mb-3">
+                  Your Question
+                </label>
+                <textarea
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="e.g., What are the main reasons customers want to cancel?"
+                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-xl
+                    text-white placeholder-purple-300
+                    focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent
+                    resize-none"
+                  rows={3}
+                />
+              </div>
 
               <button
                 type="submit"
                 disabled={isQuerying || !query.trim()}
-                className="mt-3 w-full bg-green-600 text-white py-2 px-4 rounded-md
-                  hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed
-                  transition-colors duration-200 font-medium"
+                className="w-full bg-gradient-to-r from-green-500 to-emerald-500 text-white py-4 px-6 rounded-xl
+                  hover:from-green-600 hover:to-emerald-600
+                  disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed
+                  transition-all duration-200 font-bold text-lg shadow-lg
+                  transform hover:scale-105 disabled:transform-none"
               >
-                {isQuerying ? 'Processing...' : 'Ask AI'}
+                {isQuerying ? (
+                  <span className="flex items-center justify-center">
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Searching...
+                  </span>
+                ) : 'Search Index'}
               </button>
-            </form>
 
-            {queryError && (
-              <div className="mt-4 p-3 bg-red-100 border border-red-300 rounded-md text-red-700 text-sm">
-                {queryError}
-              </div>
-            )}
-
-            {queryResult && (
-              <div className="mt-6 space-y-4">
-                {/* Answer */}
-                <div className="p-4 bg-green-50 border border-green-200 rounded-md">
-                  <h3 className="font-semibold text-green-900 mb-2">Answer</h3>
-                  <p className="text-gray-800 whitespace-pre-wrap">
-                    {queryResult.answer}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-2">
-                    Processing time: {queryResult.processing_time_ms.toFixed(0)}ms
-                  </p>
+              {/* Query Error */}
+              {queryError && (
+                <div className="p-4 bg-red-500/20 border border-red-400/30 rounded-xl text-red-200 text-sm">
+                  {queryError}
                 </div>
+              )}
 
-                {/* Sources */}
-                {queryResult.sources.length > 0 && (
-                  <div>
-                    <h3 className="font-semibold text-gray-800 mb-2">
-                      Sources ({queryResult.sources.length})
+              {/* Query Result */}
+              {queryResult && (
+                <div className="space-y-4 animate-fadeIn">
+                  {/* Answer */}
+                  <div className="p-6 bg-green-500/20 border border-green-400/30 rounded-xl">
+                    <h3 className="font-bold text-green-100 mb-3 text-lg flex items-center">
+                      <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd"/>
+                      </svg>
+                      Answer
                     </h3>
-                    <div className="space-y-2 max-h-96 overflow-y-auto">
-                      {queryResult.sources.map((source: Source, idx: number) => (
-                        <div
-                          key={idx}
-                          className="p-3 bg-gray-50 border border-gray-200 rounded-md text-sm"
-                        >
-                          <div className="flex justify-between items-start mb-1">
-                            <span className="font-medium text-gray-700">
-                              {source.conversation_id}
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              Score: {source.score.toFixed(3)}
-                            </span>
-                          </div>
-                          <p className="text-gray-600 text-xs mb-2">
-                            Date: {source.date} | Sentiment: {source.sentiment.toFixed(2)}
-                          </p>
-                          <p className="text-gray-700 italic">"{source.text}"</p>
-                          {source.intents.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {source.intents.map((intent: string, i: number) => (
-                                <span
-                                  key={i}
-                                  className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded"
-                                >
-                                  {intent}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <p className="text-green-50 whitespace-pre-wrap leading-relaxed">
+                      {queryResult.answer}
+                    </p>
+                    <p className="text-xs text-green-300 mt-3 pt-3 border-t border-green-400/30">
+                      Processing time: {queryResult.processing_time_ms.toFixed(0)}ms
+                    </p>
                   </div>
-                )}
-              </div>
-            )}
 
-            {!queryResult && !queryError && (
-              <div className="mt-6 p-4 bg-gray-50 rounded-md text-sm text-gray-600">
-                <p className="mb-2">Try asking questions like:</p>
-                <ul className="list-disc list-inside space-y-1 text-xs">
-                  <li>What are the main issues customers are facing?</li>
-                  <li>What are the common reasons for cancellation?</li>
-                  <li>What discounts or solutions were offered?</li>
-                  <li>What is the overall sentiment of conversations?</li>
-                </ul>
-              </div>
-            )}
+                  {/* Sources */}
+                  {queryResult.sources.length > 0 && (
+                    <div>
+                      <h3 className="font-bold text-purple-100 mb-3 text-lg">
+                        Sources ({queryResult.sources.length})
+                      </h3>
+                      <div className="space-y-3 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+                        {queryResult.sources.map((source: Source, idx: number) => (
+                          <div
+                            key={idx}
+                            className="p-4 bg-white/5 border border-white/20 rounded-xl text-sm hover:bg-white/10 transition-colors"
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <span className="font-semibold text-purple-200">
+                                {source.conversation_id}
+                              </span>
+                              <span className="text-xs text-purple-300 bg-purple-500/20 px-2 py-1 rounded-full">
+                                Score: {source.score.toFixed(3)}
+                              </span>
+                            </div>
+                            <p className="text-purple-300 text-xs mb-2">
+                              Date: {source.date} | Sentiment: {source.sentiment.toFixed(2)}
+                            </p>
+                            <p className="text-purple-100 italic text-xs leading-relaxed">
+                              "{source.text}"
+                            </p>
+                            {source.intents.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-1">
+                                {source.intents.map((intent: string, i: number) => (
+                                  <span
+                                    key={i}
+                                    className="px-2 py-1 bg-blue-500/30 text-blue-200 text-xs rounded-full"
+                                  >
+                                    {intent}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Example Questions */}
+              {!queryResult && !queryError && (
+                <div className="p-5 bg-white/5 rounded-xl border border-white/10">
+                  <p className="text-purple-200 text-sm mb-3 font-semibold">Try asking:</p>
+                  <ul className="list-disc list-inside space-y-2 text-xs text-purple-300">
+                    <li>What are the main issues customers are facing?</li>
+                    <li>What are the common reasons for cancellation?</li>
+                    <li>What discounts or solutions were offered?</li>
+                    <li>What is the overall sentiment of conversations?</li>
+                  </ul>
+                </div>
+              )}
+            </form>
           </div>
         </div>
       </div>
+
+      {/* Custom Scrollbar Styles */}
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(139, 92, 246, 0.5);
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(139, 92, 246, 0.7);
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn {
+          animation: fadeIn 0.5s ease-out;
+        }
+      `}</style>
     </div>
   );
 }

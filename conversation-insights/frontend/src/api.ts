@@ -87,6 +87,27 @@ export const conversationApi = {
   },
 
   /**
+   * Upload an audio file for transcription and processing
+   */
+  uploadAudio: async (file: File, conversationId?: string, metadata?: Record<string, any>): Promise<UploadResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (conversationId) {
+      formData.append('conversation_id', conversationId);
+    }
+    if (metadata) {
+      formData.append('metadata', JSON.stringify(metadata));
+    }
+
+    const response = await api.post<UploadResponse>('/upload-audio', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  /**
    * Check the status of a batch job
    */
   getStatus: async (batchId: string): Promise<StatusResponse> => {
