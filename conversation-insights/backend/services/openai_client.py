@@ -33,8 +33,13 @@ class OpenAIBatchClient:
         """
         # Create a temporary JSONL file with the requests
         with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-            for request in requests:
-                f.write(json.dumps(request) + '\n')
+            for i, request in enumerate(requests):
+                jsonl_line = json.dumps(request)
+                f.write(jsonl_line + '\n')
+                # Debug: Print first request for each batch
+                if i == 0:
+                    print(f"[DEBUG] First request in batch ({endpoint}):")
+                    print(f"[DEBUG] {jsonl_line[:500]}...")  # Print first 500 chars
             temp_file_path = f.name
 
         try:
