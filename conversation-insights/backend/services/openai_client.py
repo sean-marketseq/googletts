@@ -245,9 +245,9 @@ Please provide a clear, well-structured answer."""
         if hasattr(response, 'segments') and response.segments:
             for seg in response.segments:
                 segments.append({
-                    "start": seg.get("start", 0.0),
-                    "end": seg.get("end", 0.0),
-                    "text": seg.get("text", "")
+                    "start": getattr(seg, 'start', 0.0),
+                    "end": getattr(seg, 'end', 0.0),
+                    "text": getattr(seg, 'text', "")
                 })
 
         # Apply simple speaker splitting heuristic
