@@ -377,6 +377,15 @@ async def hume_callback(request: Request):
                 speaker_b_features
             )
 
+            # DEBUG: Check combined vector
+            combined_vec = combined["combined_vector"]
+            non_zero_count = sum(1 for v in combined_vec if v != 0.0)
+            print(f"DEBUG: Combined emotion vector length: {len(combined_vec)}, non-zero values: {non_zero_count}")
+            if non_zero_count == 0:
+                print(f"WARNING: Combined emotion vector is all zeros!")
+                print(f"  Speaker A emotion vector length: {len(speaker_a_features['emotion_vector'])}, sample: {speaker_a_features['emotion_vector'][:5]}")
+                print(f"  Speaker B emotion vector length: {len(speaker_b_features['emotion_vector'])}, sample: {speaker_b_features['emotion_vector'][:5]}")
+
             # Store emotion data for this conversation
             batch_info["emotion_data"] = {
                 "speaker_a": speaker_a_features,
@@ -568,16 +577,23 @@ async def get_batch_status(batch_id: str):
                     records=conversation_records,
                     namespace="conversations"
                 )
-                pinecone_client.upsert_emotions(
-                    records=[emotion_record],
-                    namespace="emotions"
-                )
+
+                # Only upsert emotions if vector contains non-zero values
+                emotion_vector = emotion_record["values"]
+                has_nonzero = any(v != 0.0 for v in emotion_vector)
+                if has_nonzero:
+                    pinecone_client.upsert_emotions(
+                        records=[emotion_record],
+                        namespace="emotions"
+                    )
+                    print(f"Successfully stored {len(conversation_records)} conversation records + 1 emotion record")
+                else:
+                    print(f"WARNING: Skipping emotion record - vector is all zeros")
+                    print(f"Successfully stored {len(conversation_records)} conversation records (no emotion data)")
 
                 # Mark as processed
                 stored_info["processed"] = True
                 stored_info["status"] = "completed_and_stored"
-
-                print(f"Successfully stored {len(conversation_records)} conversation records + 1 emotion record")
 
             except Exception as e:
                 print(f"Error processing results: {e}")

@@ -218,6 +218,9 @@ class HumeClient:
                         emotion_name = emotion_data.get("name")
                         emotion_score = emotion_data.get("score", 0.0)
                         emotions[emotion_name] = emotion_score
+                    if idx == 0:
+                        print(f"DEBUG: Extracted {len(emotions)} emotions from first prediction")
+                        print(f"DEBUG: Sample emotions: {list(emotions.items())[:3]}")
                 else:
                     print(f"DEBUG: No 'emotions' key in prediction {idx}, keys: {pred.keys()}")
 
