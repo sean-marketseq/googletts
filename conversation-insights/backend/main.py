@@ -248,17 +248,27 @@ async def upload_audio(
         chunks = chunk_text(transcript, max_tokens=1500, overlap=200)
         print(f"Created {len(chunks)} chunks")
 
-        # === STEP 4: Create batch requests ===
+        # === STEP 4: Extract data from chunks synchronously (FAST - direct API calls) ===
+        print(f"Extracting data from {len(chunks)} chunks...")
+        extraction_results = []
+        for chunk in chunks:
+            extracted = openai_client.extract_conversation_data(chunk["text"])
+            extraction_results.append({
+                "chunk_id": f"{conversation_id}_chunk_{chunk['index']}",
+                "data": extracted
+            })
+        print(f"Extraction complete for {len(chunks)} chunks")
+
+        # === STEP 5: Create embedding batch requests (only embeddings now) ===
         batch_requests = create_batch_requests(
             conversation_id=conversation_id,
             chunks=chunks,
             metadata=metadata_dict
         )
         embedding_count = len(batch_requests["embeddings"])
-        extraction_count = len(batch_requests["extractions"])
-        print(f"Created {embedding_count} embedding requests and {extraction_count} extraction requests")
+        print(f"Created {embedding_count} embedding requests")
 
-        # === STEP 5: Submit TWO separate OpenAI batches ===
+        # === STEP 6: Submit embedding batch ===
         print(f"[BATCH] Submitting embedding batch with {embedding_count} requests...")
         embedding_batch_id = openai_client.submit_batch(
             batch_requests["embeddings"],
@@ -266,23 +276,14 @@ async def upload_audio(
         )
         print(f"[BATCH] Embedding batch submitted: {embedding_batch_id}")
 
-        print(f"[BATCH] Submitting extraction batch with {extraction_count} requests...")
-        extraction_batch_id = openai_client.submit_batch(
-            batch_requests["extractions"],
-            endpoint="/v1/chat/completions"
-        )
-        print(f"[BATCH] Extraction batch submitted: {extraction_batch_id}")
-
-        # Check initial batch statuses
+        # Check initial batch status
         try:
             embedding_initial = openai_client.check_batch(embedding_batch_id)
-            extraction_initial = openai_client.check_batch(extraction_batch_id)
             print(f"[BATCH] Initial embedding status: {embedding_initial['status']}")
-            print(f"[BATCH] Initial extraction status: {extraction_initial['status']}")
         except Exception as e:
             print(f"[BATCH] Warning: Could not check initial status: {e}")
 
-        # === STEP 6: Store ALL job info (3 jobs: embedding, extraction, hume) ===
+        # === STEP 7: Store job info (2 jobs: embedding + hume, extractions done synchronously) ===
         batch_storage[embedding_batch_id] = {
             "conversation_id": conversation_id,
             "status": "submitted",
@@ -293,26 +294,9 @@ async def upload_audio(
             "filename": file.filename,
             "type": "embeddings",
             "paired_batch_ids": {
-                "extraction": extraction_batch_id,
                 "hume": hume_job_id
             },
-            "diarization": diarization,
-            "speaker_labels": speaker_labels,
-            "labeling_confidence": labeling_confidence
-        }
-        batch_storage[extraction_batch_id] = {
-            "conversation_id": conversation_id,
-            "status": "submitted",
-            "chunks": chunks,
-            "metadata": metadata_dict,
-            "total_chunks": len(chunks),
-            "source": "audio",
-            "filename": file.filename,
-            "type": "extractions",
-            "paired_batch_ids": {
-                "embedding": embedding_batch_id,
-                "hume": hume_job_id
-            },
+            "extraction_results": extraction_results,  # Store synchronous extraction results
             "diarization": diarization,
             "speaker_labels": speaker_labels,
             "labeling_confidence": labeling_confidence
@@ -433,35 +417,15 @@ async def get_batch_status(batch_id: str):
         stored_info = batch_storage[batch_id]
         paired_batch_ids = stored_info.get("paired_batch_ids", {})
 
-        # Check all 3 job statuses
-        batch_type = stored_info.get("type")
-
-        # Get the embedding and extraction batch IDs
-        if batch_type == "embeddings":
-            embedding_batch_id = batch_id
-            extraction_batch_id = paired_batch_ids.get("extraction")
-        else:  # type == "extractions"
-            embedding_batch_id = paired_batch_ids.get("embedding")
-            extraction_batch_id = batch_id
-
+        # Check 2 job statuses (embeddings + Hume, extractions done synchronously)
+        embedding_batch_id = batch_id
         hume_job_id = paired_batch_ids.get("hume")
 
-        # Check OpenAI batch statuses
-        embedding_status = openai_client.check_batch(embedding_batch_id) if embedding_batch_id else None
-        extraction_status = openai_client.check_batch(extraction_batch_id) if extraction_batch_id else None
+        # Check embedding batch status
+        embedding_status = openai_client.check_batch(embedding_batch_id)
 
-        # Log batch statuses for debugging
-        if embedding_status:
-            print(f"[STATUS] Embedding batch {embedding_batch_id}: {embedding_status['status']} - {embedding_status['request_counts']}")
-        if extraction_status:
-            print(f"[STATUS] Extraction batch {extraction_batch_id}: {extraction_status['status']} - {extraction_status['request_counts']}")
-            # Check for errors if extraction batch has failed requests
-            if extraction_status['request_counts']['failed'] > 0:
-                errors = openai_client.get_batch_errors(extraction_batch_id)
-                if errors:
-                    print(f"[ERROR] Extraction batch has {len(errors)} errors:")
-                    for i, error in enumerate(errors[:3]):  # Log first 3 errors
-                        print(f"[ERROR {i+1}] {error}")
+        # Log batch status for debugging
+        print(f"[STATUS] Embedding batch {embedding_batch_id}: {embedding_status['status']} - {embedding_status['request_counts']}")
 
         # Check Hume job status with error handling
         hume_status = {"state": "N/A"}
@@ -479,50 +443,92 @@ async def get_batch_status(batch_id: str):
                 print(f"Error checking Hume job status: {e}")
                 hume_status = {"state": "ERROR", "error": str(e)}
 
-        # Calculate combined progress
+        # Calculate combined progress (2 jobs: embeddings + Hume)
         jobs_completed = 0
 
         embedding_done = embedding_status and embedding_status["status"] == "completed"
-        extraction_done = extraction_status and extraction_status["status"] == "completed"
         hume_done = hume_status.get("state") == "COMPLETED"
 
         # Only count Hume if it was submitted
         if hume_job_id:
-            total_jobs = 3
-            if embedding_done:
-                jobs_completed += 1
-            if extraction_done:
-                jobs_completed += 1
-            if hume_done:
-                jobs_completed += 1
-            progress = f"{jobs_completed}/{total_jobs} jobs complete (OpenAI + Hume)"
-            all_completed = embedding_done and extraction_done and hume_done
-        else:
             total_jobs = 2
             if embedding_done:
                 jobs_completed += 1
-            if extraction_done:
+            if hume_done:
                 jobs_completed += 1
-            progress = f"{jobs_completed}/{total_jobs} jobs complete (OpenAI only)"
-            all_completed = embedding_done and extraction_done
+            progress = f"{jobs_completed}/{total_jobs} jobs complete (Embeddings + Hume)"
+            all_completed = embedding_done and hume_done
+        else:
+            total_jobs = 1
+            if embedding_done:
+                jobs_completed += 1
+            progress = f"{jobs_completed}/{total_jobs} jobs complete (Embeddings only)"
+            all_completed = embedding_done
 
         # Process and upsert if all done
         if all_completed and stored_info.get("processed") != True:
             print(f"All jobs completed for {stored_info['conversation_id']}, processing...")
 
             try:
-                # Get OpenAI batch results
-                embedding_results = openai_client.get_results(embedding_batch_id) if embedding_batch_id else []
-                extraction_results = openai_client.get_results(extraction_batch_id) if extraction_batch_id else []
-                all_results = embedding_results + extraction_results
+                # Get embedding results from batch
+                embedding_batch_results = openai_client.get_results(embedding_batch_id)
 
-                # Parse into Pinecone records for conversations index
-                conversation_records = parse_batch_results(
-                    results=all_results,
-                    conversation_id=stored_info["conversation_id"],
-                    chunks=stored_info["chunks"],
-                    metadata=stored_info["metadata"]
-                )
+                # Build embedding map
+                embeddings_map = {}
+                for result in embedding_batch_results:
+                    custom_id = result.get("custom_id", "")
+                    if custom_id.startswith("embed_"):
+                        chunk_id = custom_id.replace("embed_", "")
+                        response_body = result.get("response", {}).get("body", {})
+                        embedding = response_body.get("data", [{}])[0].get("embedding", [])
+                        embeddings_map[chunk_id] = embedding
+
+                # Get stored extraction results (already computed synchronously)
+                extraction_results = stored_info.get("extraction_results", [])
+
+                # Build extractions map
+                extractions_map = {}
+                for extraction in extraction_results:
+                    chunk_id = extraction["chunk_id"]
+                    extractions_map[chunk_id] = extraction["data"]
+
+                # Combine into Pinecone records
+                conversation_records = []
+                for chunk in stored_info["chunks"]:
+                    chunk_id = f"{stored_info['conversation_id']}_chunk_{chunk['index']}"
+
+                    if chunk_id not in embeddings_map:
+                        print(f"Warning: Missing embedding for {chunk_id}")
+                        continue
+
+                    extracted = extractions_map.get(chunk_id, {
+                        "intents": [],
+                        "entities": [],
+                        "sentiment": 0.0,
+                        "action_items": [],
+                        "compliance_flags": []
+                    })
+
+                    record = {
+                        "id": chunk_id,
+                        "values": embeddings_map[chunk_id],
+                        "metadata": {
+                            "conversation_id": stored_info["conversation_id"],
+                            "chunk_index": chunk["index"],
+                            "text": chunk["text"],
+                            "token_count": chunk["token_count"],
+                            # Merge conversation metadata
+                            **stored_info["metadata"],
+                            # Add extracted data
+                            "intents": extracted.get("intents", []),
+                            "entities": json.dumps(extracted.get("entities", [])),
+                            "sentiment": extracted.get("sentiment", 0.0),
+                            "action_items": extracted.get("action_items", []),
+                            "compliance_flags": extracted.get("compliance_flags", [])
+                        }
+                    }
+
+                    conversation_records.append(record)
 
                 # Add emotion metadata to conversation records
                 emotion_data = stored_info.get("emotion_data", {})

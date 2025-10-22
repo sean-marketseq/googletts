@@ -170,6 +170,76 @@ class OpenAIBatchClient:
         )
         return response.data[0].embedding
 
+    def extract_conversation_data(self, text: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
+        """
+        Extract structured data from conversation chunk using direct API call
+
+        Args:
+            text: Conversation text to analyze
+            model: Model to use for extraction
+
+        Returns:
+            Dictionary with intents, entities, sentiment, action_items, compliance_flags
+        """
+        extraction_prompt = """Extract from this conversation chunk:
+- intents: list of customer intents (e.g., ["cancel_subscription", "request_discount"])
+- entities: list of {type, value} objects (e.g., [{"type": "product", "value": "subscription"}])
+- sentiment: numeric score from -1 (negative) to 1 (positive)
+- action_items: list of action items mentioned (e.g., ["check for discounts", "process cancellation"])
+- compliance_flags: list of any compliance issues detected (e.g., ["missing data privacy notice"])
+
+Return only valid JSON matching this schema:
+{
+  "intents": ["string"],
+  "entities": [{"type": "string", "value": "string"}],
+  "sentiment": 0.0,
+  "action_items": ["string"],
+  "compliance_flags": ["string"]
+}
+
+Conversation chunk:
+"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a conversation analysis assistant. Extract structured data from conversations and return only valid JSON. Your response must be valid JSON only, no other text."
+                    },
+                    {
+                        "role": "user",
+                        "content": extraction_prompt + text
+                    }
+                ],
+                temperature=0.3
+            )
+
+            content = response.choices[0].message.content
+            extracted_data = json.loads(content)
+
+            return extracted_data
+
+        except json.JSONDecodeError as e:
+            print(f"Error parsing extraction JSON: {e}")
+            return {
+                "intents": [],
+                "entities": [],
+                "sentiment": 0.0,
+                "action_items": [],
+                "compliance_flags": []
+            }
+        except Exception as e:
+            print(f"Error during extraction: {e}")
+            return {
+                "intents": [],
+                "entities": [],
+                "sentiment": 0.0,
+                "action_items": [],
+                "compliance_flags": []
+            }
+
     def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-4o-mini") -> str:
         """
         Use GPT to synthesize an answer from retrieved chunks
