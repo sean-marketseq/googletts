@@ -240,7 +240,7 @@ Conversation chunk:
                 "compliance_flags": []
             }
 
-    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-4o-mini") -> str:
+    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-4o") -> str:
         """
         Use GPT to synthesize an answer from retrieved chunks
 
