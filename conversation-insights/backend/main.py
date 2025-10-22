@@ -603,13 +603,6 @@ async def get_batch_status(batch_id: str):
                 "failed": embedding_status['request_counts']['failed'] if embedding_status else 0,
                 "time_elapsed_min": round((current_time - embedding_status["created_at"]) / 60, 1) if embedding_status and embedding_status.get("created_at") else None
             } if embedding_batch_id else None,
-            "extraction_batch": {
-                "id": extraction_batch_id,
-                "status": extraction_status["status"] if extraction_status else "N/A",
-                "progress": f"{extraction_status['request_counts']['completed']}/{extraction_status['request_counts']['total']}" if extraction_status else "N/A",
-                "failed": extraction_status['request_counts']['failed'] if extraction_status else 0,
-                "time_elapsed_min": round((current_time - extraction_status["created_at"]) / 60, 1) if extraction_status and extraction_status.get("created_at") else None
-            } if extraction_batch_id else None,
             "hume_job": {
                 "id": hume_job_id,
                 "status": hume_status.get("state", "N/A"),
