@@ -269,6 +269,16 @@ class HumeClient:
 
         print(f"Computing features from {len(timeline)} timeline entries, {len(emotion_names)} emotions")
 
+        # If no emotions in timeline, return zero vector
+        if len(emotion_names) == 0:
+            print("Warning: Timeline has no emotions, returning zero vector")
+            return {
+                "emotion_vector": [0.0] * 96,
+                "top_5_emotions": [],
+                "mean_valence": 0.0,
+                "peak_emotion": None
+            }
+
         # Compute means
         means = []
         for emotion in emotion_names:
