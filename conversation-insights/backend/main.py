@@ -564,12 +564,40 @@ async def get_batch_status(batch_id: str):
         else:
             overall_status = "processing"
 
+        # Calculate time elapsed and detailed progress
+        import time
+        current_time = time.time()
+
+        batch_diagnostics = {
+            "embedding_batch": {
+                "id": embedding_batch_id,
+                "status": embedding_status["status"] if embedding_status else "N/A",
+                "progress": f"{embedding_status['request_counts']['completed']}/{embedding_status['request_counts']['total']}" if embedding_status else "N/A",
+                "failed": embedding_status['request_counts']['failed'] if embedding_status else 0,
+                "created_at": embedding_status.get("created_at") if embedding_status else None,
+                "time_elapsed_min": round((current_time - embedding_status["created_at"]) / 60, 1) if embedding_status and embedding_status.get("created_at") else None
+            } if embedding_batch_id else None,
+            "extraction_batch": {
+                "id": extraction_batch_id,
+                "status": extraction_status["status"] if extraction_status else "N/A",
+                "progress": f"{extraction_status['request_counts']['completed']}/{extraction_status['request_counts']['total']}" if extraction_status else "N/A",
+                "failed": extraction_status['request_counts']['failed'] if extraction_status else 0,
+                "created_at": extraction_status.get("created_at") if extraction_status else None,
+                "time_elapsed_min": round((current_time - extraction_status["created_at"]) / 60, 1) if extraction_status and extraction_status.get("created_at") else None
+            } if extraction_batch_id else None,
+            "hume_job": {
+                "id": hume_job_id,
+                "status": hume_status.get("state", "N/A")
+            } if hume_job_id else None
+        }
+
         return StatusResponse(
             batch_id=batch_id,
             status=overall_status,
             progress=progress,
             conversation_id=stored_info["conversation_id"],
             details={
+                "batch_diagnostics": batch_diagnostics,
                 "embedding_status": embedding_status,
                 "extraction_status": extraction_status,
                 "hume_status": hume_status,

@@ -2,6 +2,27 @@ import { useState, useEffect, useRef } from 'react';
 import conversationApi from './api';
 import EmotionChart from './components/EmotionChart';
 
+interface BatchDiagnostics {
+  embedding_batch?: {
+    id: string;
+    status: string;
+    progress: string;
+    failed: number;
+    time_elapsed_min: number | null;
+  };
+  extraction_batch?: {
+    id: string;
+    status: string;
+    progress: string;
+    failed: number;
+    time_elapsed_min: number | null;
+  };
+  hume_job?: {
+    id: string;
+    status: string;
+  };
+}
+
 interface FileStatus {
   file: File;
   id: string;
@@ -11,6 +32,7 @@ interface FileStatus {
   progress?: string;
   error?: string;
   isPolling?: boolean;
+  batchDiagnostics?: BatchDiagnostics;
   emotionData?: {
     speaker_a: {
       top_5_emotions: string[];
@@ -84,6 +106,9 @@ function App() {
         labeling_confidence: status.details?.labeling_confidence || false
       } : undefined;
 
+      // Extract batch diagnostics
+      const batchDiagnostics = status.details?.batch_diagnostics;
+
       setFileStatuses(prev => prev.map(fs =>
         fs.id === fileId ? {
           ...fs,
@@ -93,6 +118,7 @@ function App() {
           progress: status.progress,
           error: status.status === 'failed' || status.status === 'processing_failed' ?
                  'Processing failed' : undefined,
+          batchDiagnostics: batchDiagnostics,
           emotionData: emotionData
         } : fs
       ));
@@ -517,6 +543,85 @@ function App() {
                             </svg>
                           </button>
                         </div>
+
+                        {/* Batch Diagnostics Section (shown during processing) */}
+                        {fs.status === 'processing' && fs.batchDiagnostics && (
+                          <div className="mt-4 pt-4 border-t border-white/20">
+                            <h4 className="text-xs font-semibold text-purple-200 mb-3">Batch Progress</h4>
+                            <div className="space-y-2">
+                              {/* Embeddings Batch */}
+                              {fs.batchDiagnostics.embedding_batch && (
+                                <div className="bg-white/5 rounded p-2">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs text-purple-300">📊 Embeddings</span>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                                      fs.batchDiagnostics.embedding_batch.status === 'completed' ? 'bg-green-500/30 text-green-200' :
+                                      fs.batchDiagnostics.embedding_batch.status === 'in_progress' ? 'bg-blue-500/30 text-blue-200' :
+                                      fs.batchDiagnostics.embedding_batch.status === 'validating' ? 'bg-yellow-500/30 text-yellow-200' :
+                                      'bg-gray-500/30 text-gray-200'
+                                    }`}>
+                                      {fs.batchDiagnostics.embedding_batch.status}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-purple-300">{fs.batchDiagnostics.embedding_batch.progress}</span>
+                                    {fs.batchDiagnostics.embedding_batch.time_elapsed_min !== null && (
+                                      <span className="text-purple-400">{fs.batchDiagnostics.embedding_batch.time_elapsed_min} min</span>
+                                    )}
+                                  </div>
+                                  {fs.batchDiagnostics.embedding_batch.failed > 0 && (
+                                    <div className="text-xs text-red-300 mt-1">⚠ {fs.batchDiagnostics.embedding_batch.failed} failed</div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Extractions Batch */}
+                              {fs.batchDiagnostics.extraction_batch && (
+                                <div className="bg-white/5 rounded p-2">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs text-purple-300">🔍 Extractions</span>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                                      fs.batchDiagnostics.extraction_batch.status === 'completed' ? 'bg-green-500/30 text-green-200' :
+                                      fs.batchDiagnostics.extraction_batch.status === 'in_progress' ? 'bg-blue-500/30 text-blue-200' :
+                                      fs.batchDiagnostics.extraction_batch.status === 'validating' ? 'bg-yellow-500/30 text-yellow-200' :
+                                      'bg-gray-500/30 text-gray-200'
+                                    }`}>
+                                      {fs.batchDiagnostics.extraction_batch.status}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-purple-300">{fs.batchDiagnostics.extraction_batch.progress}</span>
+                                    {fs.batchDiagnostics.extraction_batch.time_elapsed_min !== null && (
+                                      <span className="text-purple-400">{fs.batchDiagnostics.extraction_batch.time_elapsed_min} min</span>
+                                    )}
+                                  </div>
+                                  {fs.batchDiagnostics.extraction_batch.failed > 0 && (
+                                    <div className="text-xs text-red-300 mt-1">⚠ {fs.batchDiagnostics.extraction_batch.failed} failed</div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Hume Job */}
+                              {fs.batchDiagnostics.hume_job && (
+                                <div className="bg-white/5 rounded p-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs text-purple-300">😊 Emotion Analysis</span>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                                      fs.batchDiagnostics.hume_job.status === 'COMPLETED' ? 'bg-green-500/30 text-green-200' :
+                                      fs.batchDiagnostics.hume_job.status === 'IN_PROGRESS' ? 'bg-blue-500/30 text-blue-200' :
+                                      'bg-gray-500/30 text-gray-200'
+                                    }`}>
+                                      {fs.batchDiagnostics.hume_job.status}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            <div className="mt-2 text-xs text-purple-400">
+                              💡 Chat completions typically take 20-60 minutes
+                            </div>
+                          </div>
+                        )}
 
                         {/* Emotion Analysis Section */}
                         {fs.status === 'completed' && fs.emotionData && (
