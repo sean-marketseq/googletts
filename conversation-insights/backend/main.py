@@ -571,6 +571,10 @@ async def get_batch_status(batch_id: str):
                     record["metadata"]["labeling_confidence"] = stored_info.get("labeling_confidence", False)
 
                 # Create emotion record for emotions index
+                # Extract peak emotion names (Pinecone only accepts strings, not dicts)
+                speaker_a_peak = emotion_data.get("speaker_a", {}).get("peak_emotion")
+                speaker_b_peak = emotion_data.get("speaker_b", {}).get("peak_emotion")
+
                 emotion_record = {
                     "id": stored_info["conversation_id"],
                     "values": emotion_data.get("combined_vector", [0.0] * 192),
@@ -578,9 +582,9 @@ async def get_batch_status(batch_id: str):
                         "conversation_id": stored_info["conversation_id"],
                         "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
                         "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
-                        "speaker_a_peak": emotion_data.get("speaker_a", {}).get("peak_emotion"),
-                        "speaker_b_peak": emotion_data.get("speaker_b", {}).get("peak_emotion"),
-                        "speaker_labels": stored_info.get("speaker_labels", {}),
+                        "speaker_a_peak": speaker_a_peak["emotion"] if speaker_a_peak else None,
+                        "speaker_b_peak": speaker_b_peak["emotion"] if speaker_b_peak else None,
+                        "speaker_labels": json.dumps(stored_info.get("speaker_labels", {})),
                         "labeling_confidence": stored_info.get("labeling_confidence", False),
                         **stored_info["metadata"]
                     }
