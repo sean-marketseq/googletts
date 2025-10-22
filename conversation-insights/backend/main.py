@@ -611,18 +611,33 @@ async def get_batch_status(batch_id: str):
             } if hume_job_id else None
         }
 
+        # Build response details
+        details = {
+            "batch_diagnostics": batch_diagnostics,
+            "emotion_data_ready": stored_info.get("emotion_data") is not None,
+            "emotion_data": stored_info.get("emotion_data"),
+            "speaker_labels": stored_info.get("speaker_labels"),
+            "labeling_confidence": stored_info.get("labeling_confidence")
+        }
+
+        # Validate JSON serializability before returning
+        try:
+            json.dumps(details)
+        except TypeError as e:
+            print(f"[ERROR] Response contains non-serializable data: {e}")
+            print(f"[ERROR] Problematic details: {details}")
+            # Return minimal safe response
+            details = {
+                "batch_diagnostics": batch_diagnostics,
+                "error": "Response serialization error - check logs"
+            }
+
         return StatusResponse(
             batch_id=batch_id,
             status=overall_status,
             progress=progress,
             conversation_id=stored_info["conversation_id"],
-            details={
-                "batch_diagnostics": batch_diagnostics,
-                "emotion_data_ready": stored_info.get("emotion_data") is not None,
-                "emotion_data": stored_info.get("emotion_data"),
-                "speaker_labels": stored_info.get("speaker_labels"),
-                "labeling_confidence": stored_info.get("labeling_confidence")
-            }
+            details=details
         )
 
     except HTTPException:
