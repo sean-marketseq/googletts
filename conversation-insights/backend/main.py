@@ -427,27 +427,37 @@ async def get_batch_status(batch_id: str):
         # Log batch status for debugging
         print(f"[STATUS] Embedding batch {embedding_batch_id}: {embedding_status['status']} - {embedding_status['request_counts']}")
 
-        # Check Hume job status with error handling
+        # Check Hume job status - use stored emotion data if webhook received
         hume_status = {"state": "N/A"}
+        hume_done = False
+
         if hume_job_id:
-            try:
-                hume_raw = hume_client.get_job_status(hume_job_id)
-                # Sanitize Hume response - only extract serializable fields
-                hume_status = {
-                    "state": hume_raw.get("state", "UNKNOWN"),
-                    "message": hume_raw.get("message", "")
-                }
-                if "error" in hume_raw:
-                    hume_status["error"] = str(hume_raw["error"])
-            except Exception as e:
-                print(f"Error checking Hume job status: {e}")
-                hume_status = {"state": "ERROR", "error": str(e)}
+            # First check if webhook has already stored emotion data
+            emotion_data = stored_info.get("emotion_data", {})
+            if emotion_data.get("hume_job_status") == "completed":
+                hume_status = {"state": "COMPLETED", "message": "Webhook received"}
+                hume_done = True
+                print(f"[STATUS] Hume job {hume_job_id}: COMPLETED (via webhook)")
+            else:
+                # Fallback to API check if no webhook data yet
+                try:
+                    hume_raw = hume_client.get_job_status(hume_job_id)
+                    # Sanitize Hume response - only extract serializable fields
+                    hume_status = {
+                        "state": hume_raw.get("state", "UNKNOWN"),
+                        "message": hume_raw.get("message", "")
+                    }
+                    if "error" in hume_raw:
+                        hume_status["error"] = str(hume_raw["error"])
+                    hume_done = hume_status.get("state") == "COMPLETED"
+                except Exception as e:
+                    print(f"Error checking Hume job status: {e}")
+                    hume_status = {"state": "ERROR", "error": str(e)}
 
         # Calculate combined progress (2 jobs: embeddings + Hume)
         jobs_completed = 0
 
         embedding_done = embedding_status and embedding_status["status"] == "completed"
-        hume_done = hume_status.get("state") == "COMPLETED"
 
         # Only count Hume if it was submitted
         if hume_job_id:
