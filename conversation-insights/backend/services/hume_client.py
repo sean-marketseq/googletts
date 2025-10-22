@@ -172,10 +172,15 @@ class HumeClient:
             # Hume API structure: navigate to prosody predictions
             if isinstance(hume_predictions, list):
                 for result in hume_predictions:
+                    # Check for batch API structure with grouped_predictions
                     if "results" in result and "predictions" in result["results"]:
                         for pred_group in result["results"]["predictions"]:
                             if "models" in pred_group and "prosody" in pred_group["models"]:
                                 prosody_predictions.extend(pred_group["models"]["prosody"]["grouped_predictions"])
+                    # Check for direct predictions array structure (what we're actually getting)
+                    elif "predictions" in result:
+                        print(f"DEBUG: Found 'predictions' array with {len(result['predictions'])} items")
+                        prosody_predictions.extend(result["predictions"])
             elif "predictions" in hume_predictions:
                 prosody_predictions = hume_predictions["predictions"]
             else:
