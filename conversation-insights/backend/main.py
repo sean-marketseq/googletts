@@ -259,14 +259,28 @@ async def upload_audio(
         print(f"Created {embedding_count} embedding requests and {extraction_count} extraction requests")
 
         # === STEP 5: Submit TWO separate OpenAI batches ===
+        print(f"[BATCH] Submitting embedding batch with {embedding_count} requests...")
         embedding_batch_id = openai_client.submit_batch(
             batch_requests["embeddings"],
             endpoint="/v1/embeddings"
         )
+        print(f"[BATCH] Embedding batch submitted: {embedding_batch_id}")
+
+        print(f"[BATCH] Submitting extraction batch with {extraction_count} requests...")
         extraction_batch_id = openai_client.submit_batch(
             batch_requests["extractions"],
             endpoint="/v1/chat/completions"
         )
+        print(f"[BATCH] Extraction batch submitted: {extraction_batch_id}")
+
+        # Check initial batch statuses
+        try:
+            embedding_initial = openai_client.check_batch(embedding_batch_id)
+            extraction_initial = openai_client.check_batch(extraction_batch_id)
+            print(f"[BATCH] Initial embedding status: {embedding_initial['status']}")
+            print(f"[BATCH] Initial extraction status: {extraction_initial['status']}")
+        except Exception as e:
+            print(f"[BATCH] Warning: Could not check initial status: {e}")
 
         # === STEP 6: Store ALL job info (3 jobs: embedding, extraction, hume) ===
         batch_storage[embedding_batch_id] = {
