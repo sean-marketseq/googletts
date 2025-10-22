@@ -544,8 +544,8 @@ function App() {
                           </button>
                         </div>
 
-                        {/* Batch Diagnostics Section (shown during processing) */}
-                        {fs.status === 'processing' && fs.batchDiagnostics && (
+                        {/* Batch Diagnostics Section (shown during processing) - TEMPORARILY DISABLED */}
+                        {false && fs.status === 'processing' && fs.batchDiagnostics && (
                           <div className="mt-4 pt-4 border-t border-white/20">
                             <h4 className="text-xs font-semibold text-purple-200 mb-3">Batch Progress</h4>
                             <div className="space-y-2">
