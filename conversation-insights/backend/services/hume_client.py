@@ -161,6 +161,14 @@ class HumeClient:
         prosody_predictions = []
 
         try:
+            # DEBUG: Print raw Hume predictions structure
+            print(f"DEBUG: Hume predictions type: {type(hume_predictions)}")
+            if isinstance(hume_predictions, dict):
+                print(f"DEBUG: Hume predictions keys: {hume_predictions.keys()}")
+            elif isinstance(hume_predictions, list) and len(hume_predictions) > 0:
+                print(f"DEBUG: Hume predictions list length: {len(hume_predictions)}")
+                print(f"DEBUG: First item keys: {hume_predictions[0].keys() if isinstance(hume_predictions[0], dict) else 'not a dict'}")
+
             # Hume API structure: navigate to prosody predictions
             if isinstance(hume_predictions, list):
                 for result in hume_predictions:
@@ -185,8 +193,13 @@ class HumeClient:
             }
 
         # Align each Hume prediction window with speaker
-        for pred in prosody_predictions:
+        for idx, pred in enumerate(prosody_predictions):
             try:
+                # DEBUG: Print first prediction structure to understand format
+                if idx == 0:
+                    print(f"DEBUG: First prediction structure: {pred}")
+                    print(f"DEBUG: Prediction keys: {pred.keys()}")
+
                 # Get time window
                 time_info = pred.get("time", {})
                 pred_start = time_info.get("begin", 0.0)
@@ -200,6 +213,8 @@ class HumeClient:
                         emotion_name = emotion_data.get("name")
                         emotion_score = emotion_data.get("score", 0.0)
                         emotions[emotion_name] = emotion_score
+                else:
+                    print(f"DEBUG: No 'emotions' key in prediction {idx}, keys: {pred.keys()}")
 
                 # Find overlapping whisper segment to determine speaker
                 matched_speaker = None
