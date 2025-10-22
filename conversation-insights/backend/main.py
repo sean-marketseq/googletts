@@ -12,6 +12,10 @@ from dotenv import load_dotenv
 from services.processor import chunk_text, create_batch_requests, parse_batch_results
 from services.openai_client import OpenAIBatchClient
 from services.pinecone_client import PineconeClient
+from services.hume_client import HumeClient
+from fastapi import Request
+import io
+import traceback
 
 # Load environment variables
 load_dotenv()
@@ -31,6 +35,7 @@ app.add_middleware(
 # Initialize clients
 openai_client = OpenAIBatchClient()
 pinecone_client = PineconeClient()
+hume_client = HumeClient()
 
 # In-memory storage for batch tracking
 # Format: {batch_id: {conversation_id, status, chunks, metadata}}
@@ -73,11 +78,15 @@ class StatusResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize Pinecone index on startup"""
+    """Initialize Pinecone indices on startup"""
     try:
-        print("Initializing Pinecone index...")
+        print("Initializing Pinecone conversations index...")
         pinecone_client.setup_index(dimension=1024, metric="cosine")
-        print("Pinecone index ready")
+        print("Conversations index ready")
+
+        print("Initializing Pinecone emotions index...")
+        pinecone_client.setup_emotion_index(dimension=192, metric="cosine")
+        print("Emotions index ready")
     except Exception as e:
         print(f"Error initializing Pinecone: {e}")
         print("Application will continue, but vector storage may not work")
@@ -174,11 +183,13 @@ async def upload_audio(
     Upload and process an audio file
 
     Steps:
-    1. Transcribe audio with Whisper API
-    2. Chunk the transcript
-    3. Create batch requests for OpenAI (embeddings + extraction)
-    4. Submit to OpenAI Batch API
-    5. Store batch_id and return immediately
+    1. Transcribe audio with Whisper API (with diarization)
+    2. Label speakers (AGENT/CALLER or SPEAKER_A/B)
+    3. Submit to Hume for emotion prosody analysis
+    4. Chunk the transcript
+    5. Create batch requests for OpenAI (embeddings + extraction)
+    6. Submit to OpenAI Batch API
+    7. Store all job IDs and return immediately
     """
     try:
         # Validate file type
@@ -204,17 +215,35 @@ async def upload_audio(
 
         print(f"Processing audio file: {file.filename} for conversation: {conversation_id}")
 
-        # Step 1: Transcribe audio
+        # Read audio content
         audio_content = await file.read()
-        transcript = openai_client.transcribe_audio(audio_content, file.filename)
 
-        print(f"Transcription complete: {len(transcript)} characters")
+        # === STEP 1: Transcribe with diarization ===
+        diarization = openai_client.transcribe_audio_with_diarization(
+            io.BytesIO(audio_content),
+            file.filename
+        )
+        speaker_labels, labeling_confidence = openai_client.label_speakers_as_agent_caller(
+            diarization["segments"]
+        )
 
-        # Step 2: Chunk the transcript
+        print(f"Speaker labeling: {speaker_labels} (confidence: {labeling_confidence})")
+
+        # === STEP 2: Submit to Hume ===
+        hume_callback_url = os.getenv("HUME_CALLBACK_URL")
+        hume_job_id = hume_client.submit_audio(
+            io.BytesIO(audio_content),
+            file.filename,
+            callback_url=hume_callback_url
+        )
+        print(f"Hume job submitted: {hume_job_id}")
+
+        # === STEP 3: Chunk transcript ===
+        transcript = diarization["full_transcript"]
         chunks = chunk_text(transcript, max_tokens=1500, overlap=200)
         print(f"Created {len(chunks)} chunks")
 
-        # Step 3: Create batch requests (returns dict with separate embeddings/extractions)
+        # === STEP 4: Create batch requests ===
         batch_requests = create_batch_requests(
             conversation_id=conversation_id,
             chunks=chunks,
@@ -224,7 +253,7 @@ async def upload_audio(
         extraction_count = len(batch_requests["extractions"])
         print(f"Created {embedding_count} embedding requests and {extraction_count} extraction requests")
 
-        # Step 4: Submit TWO separate batches (OpenAI requires same endpoint per batch)
+        # === STEP 5: Submit TWO separate OpenAI batches ===
         embedding_batch_id = openai_client.submit_batch(
             batch_requests["embeddings"],
             endpoint="/v1/embeddings"
@@ -234,7 +263,7 @@ async def upload_audio(
             endpoint="/v1/chat/completions"
         )
 
-        # Step 5: Store both batch infos with cross-references
+        # === STEP 6: Store ALL job info (3 jobs: embedding, extraction, hume) ===
         batch_storage[embedding_batch_id] = {
             "conversation_id": conversation_id,
             "status": "submitted",
@@ -244,7 +273,13 @@ async def upload_audio(
             "source": "audio",
             "filename": file.filename,
             "type": "embeddings",
-            "paired_batch_id": extraction_batch_id
+            "paired_batch_ids": {
+                "extraction": extraction_batch_id,
+                "hume": hume_job_id
+            },
+            "diarization": diarization,
+            "speaker_labels": speaker_labels,
+            "labeling_confidence": labeling_confidence
         }
         batch_storage[extraction_batch_id] = {
             "conversation_id": conversation_id,
@@ -255,7 +290,13 @@ async def upload_audio(
             "source": "audio",
             "filename": file.filename,
             "type": "extractions",
-            "paired_batch_id": embedding_batch_id
+            "paired_batch_ids": {
+                "embedding": embedding_batch_id,
+                "hume": hume_job_id
+            },
+            "diarization": diarization,
+            "speaker_labels": speaker_labels,
+            "labeling_confidence": labeling_confidence
         }
 
         # Return embedding batch_id as primary (client will poll this one)
@@ -270,9 +311,91 @@ async def upload_audio(
         raise
     except Exception as e:
         print(f"Error processing audio: {e}")
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to process audio: {str(e)}")
+
+
+@app.post("/hume/callback")
+async def hume_callback(request: Request):
+    """
+    Webhook endpoint for Hume batch completion
+    Validates signature and processes emotion data
+    """
+    try:
+        # Validate webhook secret
+        provided_secret = request.headers.get("X-Hume-Webhook-Secret")
+        expected_secret = os.getenv("HUME_WEBHOOK_SECRET")
+
+        if provided_secret != expected_secret:
+            print(f"Invalid webhook secret received")
+            raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
+        payload = await request.json()
+        print(f"Hume webhook received: {payload}")
+
+        job_id = payload.get("job_id")
+        status = payload.get("status")
+
+        if status == "COMPLETED":
+            # Find conversation by hume job_id
+            batch_info = None
+            for bid, info in batch_storage.items():
+                if info.get("paired_batch_ids", {}).get("hume") == job_id:
+                    batch_info = info
+                    break
+
+            if not batch_info:
+                print(f"No batch found for Hume job: {job_id}")
+                return {"status": "ignored"}
+
+            print(f"Processing Hume results for job: {job_id}")
+
+            # Fetch predictions
+            predictions = hume_client.get_predictions(job_id)
+
+            # Align with speakers
+            aligned = hume_client.align_emotions_with_speakers(
+                predictions,
+                batch_info["diarization"]["segments"],
+                batch_info["speaker_labels"]
+            )
+
+            # Compute features for each speaker
+            speaker_a_features = hume_client.compute_speaker_emotion_features(
+                aligned["speaker_a_timeline"]
+            )
+            speaker_b_features = hume_client.compute_speaker_emotion_features(
+                aligned["speaker_b_timeline"]
+            )
+
+            # Combine features
+            combined = hume_client.compute_combined_features(
+                speaker_a_features,
+                speaker_b_features
+            )
+
+            # Store emotion data for this conversation
+            batch_info["emotion_data"] = {
+                "speaker_a": speaker_a_features,
+                "speaker_b": speaker_b_features,
+                "combined_vector": combined["combined_vector"],
+                "timelines": {
+                    "speaker_a": aligned["speaker_a_timeline"],
+                    "speaker_b": aligned["speaker_b_timeline"]
+                },
+                "hume_job_status": "completed"
+            }
+
+            print(f"Emotion data stored for conversation: {batch_info['conversation_id']}")
+
+        return {"status": "received"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in Hume callback: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/status/{batch_id}", response_model=StatusResponse)
@@ -280,8 +403,8 @@ async def get_batch_status(batch_id: str):
     """
     Check status of a batch job
 
-    Since we now submit TWO batches (embeddings + extractions),
-    we wait for BOTH to complete before processing results
+    Now checks THREE jobs: embeddings, extractions, AND hume prosody
+    Waits for ALL THREE to complete before processing results
     """
     try:
         # Check if batch_id exists in our storage
@@ -289,85 +412,124 @@ async def get_batch_status(batch_id: str):
             raise HTTPException(status_code=404, detail=f"Batch {batch_id} not found")
 
         stored_info = batch_storage[batch_id]
-        paired_batch_id = stored_info.get("paired_batch_id")
+        paired_batch_ids = stored_info.get("paired_batch_ids", {})
 
-        # Check status of the requested batch
-        batch_status = openai_client.check_batch(batch_id)
-        stored_info["status"] = batch_status["status"]
+        # Check all 3 job statuses
+        batch_type = stored_info.get("type")
 
-        # Also check the paired batch if it exists
-        paired_batch_status = None
-        if paired_batch_id and paired_batch_id in batch_storage:
-            paired_batch_status = openai_client.check_batch(paired_batch_id)
-            batch_storage[paired_batch_id]["status"] = paired_batch_status["status"]
+        # Get the embedding and extraction batch IDs
+        if batch_type == "embeddings":
+            embedding_batch_id = batch_id
+            extraction_batch_id = paired_batch_ids.get("extraction")
+        else:  # type == "extractions"
+            embedding_batch_id = paired_batch_ids.get("embedding")
+            extraction_batch_id = batch_id
+
+        hume_job_id = paired_batch_ids.get("hume")
+
+        # Check OpenAI batch statuses
+        embedding_status = openai_client.check_batch(embedding_batch_id) if embedding_batch_id else None
+        extraction_status = openai_client.check_batch(extraction_batch_id) if extraction_batch_id else None
+
+        # Check Hume job status
+        hume_status = hume_client.get_job_status(hume_job_id) if hume_job_id else {"state": "N/A"}
 
         # Calculate combined progress
-        request_counts = batch_status["request_counts"]
-        if paired_batch_status:
-            paired_counts = paired_batch_status["request_counts"]
-            total_completed = request_counts['completed'] + paired_counts['completed']
-            total_requests = request_counts['total'] + paired_counts['total']
-            progress = f"{total_completed}/{total_requests} requests (embeddings + extractions)"
-        else:
-            progress = f"{request_counts['completed']}/{request_counts['total']} requests"
+        jobs_completed = 0
+        total_jobs = 3
 
-        # Only process if BOTH batches are completed
-        both_completed = (
-            batch_status["status"] == "completed" and
-            (not paired_batch_status or paired_batch_status["status"] == "completed")
-        )
+        embedding_done = embedding_status and embedding_status["status"] == "completed"
+        extraction_done = extraction_status and extraction_status["status"] == "completed"
+        hume_done = hume_status.get("state") == "COMPLETED"
 
-        if both_completed and stored_info.get("processed") != True:
-            print(f"Both batches completed for {stored_info['conversation_id']}, processing results...")
+        if embedding_done:
+            jobs_completed += 1
+        if extraction_done:
+            jobs_completed += 1
+        if hume_done:
+            jobs_completed += 1
+
+        progress = f"{jobs_completed}/{total_jobs} jobs complete (OpenAI + Hume)"
+
+        # All 3 jobs must be completed
+        all_completed = embedding_done and extraction_done and hume_done
+
+        # Process and upsert if all done
+        if all_completed and stored_info.get("processed") != True:
+            print(f"All 3 jobs completed for {stored_info['conversation_id']}, processing...")
 
             try:
-                # Get results from BOTH batches
-                results = openai_client.get_results(batch_id)
+                # Get OpenAI batch results
+                embedding_results = openai_client.get_results(embedding_batch_id) if embedding_batch_id else []
+                extraction_results = openai_client.get_results(extraction_batch_id) if extraction_batch_id else []
+                all_results = embedding_results + extraction_results
 
-                if paired_batch_id:
-                    paired_results = openai_client.get_results(paired_batch_id)
-                    # Combine results from both batches
-                    results.extend(paired_results)
-                    print(f"Combined {len(results)} results from both batches")
-
-                # Parse and combine results
-                pinecone_records = parse_batch_results(
-                    results=results,
+                # Parse into Pinecone records for conversations index
+                conversation_records = parse_batch_results(
+                    results=all_results,
                     conversation_id=stored_info["conversation_id"],
                     chunks=stored_info["chunks"],
                     metadata=stored_info["metadata"]
                 )
 
-                # Upsert to Pinecone
+                # Add emotion metadata to conversation records
+                emotion_data = stored_info.get("emotion_data", {})
+                for record in conversation_records:
+                    record["metadata"]["speaker_a_top_emotions"] = emotion_data.get("speaker_a", {}).get("top_5_emotions", [])
+                    record["metadata"]["speaker_b_top_emotions"] = emotion_data.get("speaker_b", {}).get("top_5_emotions", [])
+                    record["metadata"]["labeling_confidence"] = stored_info.get("labeling_confidence", False)
+
+                # Create emotion record for emotions index
+                emotion_record = {
+                    "id": stored_info["conversation_id"],
+                    "values": emotion_data.get("combined_vector", [0.0] * 192),
+                    "metadata": {
+                        "conversation_id": stored_info["conversation_id"],
+                        "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
+                        "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
+                        "speaker_a_peak": emotion_data.get("speaker_a", {}).get("peak_emotion"),
+                        "speaker_b_peak": emotion_data.get("speaker_b", {}).get("peak_emotion"),
+                        "speaker_labels": stored_info.get("speaker_labels", {}),
+                        "labeling_confidence": stored_info.get("labeling_confidence", False),
+                        **stored_info["metadata"]
+                    }
+                }
+
+                # Dual upsert to both indices
                 pinecone_client.upsert_conversation(
-                    records=pinecone_records,
+                    records=conversation_records,
                     namespace="conversations"
                 )
+                pinecone_client.upsert_emotions(
+                    records=[emotion_record],
+                    namespace="emotions"
+                )
 
-                # Mark BOTH batches as processed
+                # Mark as processed
                 stored_info["processed"] = True
                 stored_info["status"] = "completed_and_stored"
 
-                if paired_batch_id and paired_batch_id in batch_storage:
-                    batch_storage[paired_batch_id]["processed"] = True
-                    batch_storage[paired_batch_id]["status"] = "completed_and_stored"
+                # Mark paired batches as processed too
+                if extraction_batch_id and extraction_batch_id in batch_storage:
+                    batch_storage[extraction_batch_id]["processed"] = True
+                    batch_storage[extraction_batch_id]["status"] = "completed_and_stored"
+                if embedding_batch_id and embedding_batch_id in batch_storage:
+                    batch_storage[embedding_batch_id]["processed"] = True
+                    batch_storage[embedding_batch_id]["status"] = "completed_and_stored"
 
-                print(f"Successfully stored {len(pinecone_records)} records in Pinecone")
+                print(f"Successfully stored {len(conversation_records)} conversation records + 1 emotion record")
 
             except Exception as e:
-                print(f"Error processing batch results: {e}")
-                import traceback
+                print(f"Error processing results: {e}")
                 traceback.print_exc()
                 stored_info["status"] = "processing_failed"
                 stored_info["error"] = str(e)
 
-        # Determine overall status to return
+        # Determine overall status
         if stored_info.get("processed"):
             overall_status = "completed_and_stored"
-        elif both_completed:
+        elif all_completed:
             overall_status = "completed"
-        elif batch_status["status"] == "failed" or (paired_batch_status and paired_batch_status["status"] == "failed"):
-            overall_status = "failed"
         else:
             overall_status = "processing"
 
@@ -376,14 +538,21 @@ async def get_batch_status(batch_id: str):
             status=overall_status,
             progress=progress,
             conversation_id=stored_info["conversation_id"],
-            details=batch_status
+            details={
+                "embedding_status": embedding_status,
+                "extraction_status": extraction_status,
+                "hume_status": hume_status,
+                "emotion_data_ready": stored_info.get("emotion_data") is not None,
+                "emotion_data": stored_info.get("emotion_data"),
+                "speaker_labels": stored_info.get("speaker_labels"),
+                "labeling_confidence": stored_info.get("labeling_confidence")
+            }
         )
 
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error checking batch status: {e}")
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to check status: {str(e)}")
 

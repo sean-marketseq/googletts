@@ -25,6 +25,8 @@ class PineconeClient:
         # Initialize Pinecone
         self.pc = Pinecone(api_key=self.api_key)
         self.index = None
+        self.emotion_index = None
+        self.emotion_index_name = os.getenv("PINECONE_EMOTION_INDEX", "emotions")
 
     def setup_index(self, dimension: int = 1536, metric: str = "cosine"):
         """
@@ -56,6 +58,57 @@ class PineconeClient:
 
         # Connect to the index
         self.index = self.pc.Index(self.index_name)
+
+    def setup_emotion_index(self, dimension: int = 192, metric: str = "cosine"):
+        """
+        Create or connect to emotion Pinecone index (192-d for dual speaker emotion vectors)
+
+        Args:
+            dimension: Embedding dimension (192 = 96 caller + 96 agent)
+            metric: Distance metric (cosine, euclidean, dotproduct)
+        """
+        existing_indexes = self.pc.list_indexes()
+
+        if self.emotion_index_name not in [idx.name for idx in existing_indexes]:
+            print(f"Creating new Pinecone emotion index: {self.emotion_index_name}")
+
+            self.pc.create_index(
+                name=self.emotion_index_name,
+                dimension=dimension,
+                metric=metric,
+                spec=ServerlessSpec(
+                    cloud="aws",
+                    region="us-east-1"
+                )
+            )
+            print(f"Emotion index {self.emotion_index_name} created successfully")
+        else:
+            print(f"Using existing emotion index: {self.emotion_index_name}")
+
+        # Connect to the emotion index
+        self.emotion_index = self.pc.Index(self.emotion_index_name)
+
+    def upsert_emotions(self, records: List[Dict[str, Any]], namespace: str = "emotions"):
+        """
+        Insert or update emotion vectors in Pinecone emotion index
+
+        Args:
+            records: List of records with format:
+                     {"id": str, "values": List[float], "metadata": Dict}
+            namespace: Pinecone namespace for organization
+        """
+        if not self.emotion_index:
+            print("Emotion index not initialized, setting up now...")
+            self.setup_emotion_index(dimension=192)
+
+        # Batch upserts
+        batch_size = 100
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            self.emotion_index.upsert(vectors=batch, namespace=namespace)
+            print(f"Upserted {len(batch)} emotion vectors to Pinecone")
+
+        print(f"Total emotion vectors upserted: {len(records)}")
 
     def upsert_conversation(self, records: List[Dict[str, Any]], namespace: str = "conversations"):
         """

@@ -209,3 +209,148 @@ Please provide a clear, well-structured answer."""
 
         print(f"Transcription complete: {len(response)} characters")
         return response
+
+    def transcribe_audio_with_diarization(self, audio_file: BinaryIO, filename: str) -> Dict[str, Any]:
+        """
+        Transcribe audio with speaker diarization using Whisper
+
+        Args:
+            audio_file: Binary file object of the audio
+            filename: Original filename
+
+        Returns:
+            {
+                "full_transcript": "...",
+                "segments": [
+                    {"start": 0.0, "end": 3.5, "speaker": "SPEAKER_0", "text": "Hello..."},
+                    {"start": 3.5, "end": 8.2, "speaker": "SPEAKER_1", "text": "Hi..."}
+                ]
+            }
+        """
+        print(f"Transcribing with diarization: {filename}")
+
+        # Request verbose JSON format with timestamps
+        response = self.client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(filename, audio_file),
+            response_format="verbose_json",
+            timestamp_granularities=["segment"]
+        )
+
+        # Get full transcript
+        full_transcript = response.text
+
+        # Extract segments with timestamps
+        segments = []
+        if hasattr(response, 'segments') and response.segments:
+            for seg in response.segments:
+                segments.append({
+                    "start": seg.get("start", 0.0),
+                    "end": seg.get("end", 0.0),
+                    "text": seg.get("text", "")
+                })
+
+        # Apply simple speaker splitting heuristic
+        labeled_segments = self._split_speakers_heuristic(segments)
+
+        print(f"Diarization complete: {len(labeled_segments)} segments")
+        return {
+            "full_transcript": full_transcript,
+            "segments": labeled_segments
+        }
+
+    def _split_speakers_heuristic(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Simple speaker splitting based on pauses and turn-taking
+
+        Args:
+            segments: List of segments with start, end, text
+
+        Returns:
+            Segments with speaker labels added
+        """
+        if not segments:
+            return []
+
+        labeled_segments = []
+        current_speaker = "SPEAKER_0"
+
+        for i, segment in enumerate(segments):
+            # Detect speaker change based on pause duration
+            if i > 0:
+                pause = segment["start"] - segments[i-1]["end"]
+                # If pause > 1 second, assume speaker change
+                if pause > 1.0:
+                    current_speaker = "SPEAKER_1" if current_speaker == "SPEAKER_0" else "SPEAKER_0"
+
+            labeled_segments.append({
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": segment["text"],
+                "speaker": current_speaker
+            })
+
+        return labeled_segments
+
+    def label_speakers_as_agent_caller(
+        self,
+        segments: List[Dict[str, Any]]
+    ) -> tuple:
+        """
+        Attempt to identify AGENT vs CALLER using heuristics
+
+        Args:
+            segments: List of segments with speaker labels
+
+        Returns:
+            Tuple of (speaker_labels_dict, confidence_flag)
+            - High confidence: ({"SPEAKER_0": "AGENT", "SPEAKER_1": "CALLER"}, True)
+            - Low confidence: ({"SPEAKER_0": "SPEAKER_A", "SPEAKER_1": "SPEAKER_B"}, False)
+        """
+        if not segments:
+            return {"SPEAKER_0": "SPEAKER_A", "SPEAKER_1": "SPEAKER_B"}, False
+
+        # Get first speaker
+        first_speaker = segments[0]["speaker"]
+
+        # Aggregate text by speaker
+        speaker_0_text = " ".join([s["text"] for s in segments if s["speaker"] == "SPEAKER_0"]).lower()
+        speaker_1_text = " ".join([s["text"] for s in segments if s["speaker"] == "SPEAKER_1"]).lower()
+
+        # Agent greeting phrases
+        greeting_phrases = [
+            "thank you for calling",
+            "thanks for calling",
+            "how may i help",
+            "how can i help",
+            "how may i assist",
+            "customer service",
+            "technical support",
+            "welcome to"
+        ]
+
+        # Check if either speaker uses agent greetings
+        speaker_0_is_agent = any(phrase in speaker_0_text for phrase in greeting_phrases)
+        speaker_1_is_agent = any(phrase in speaker_1_text for phrase in greeting_phrases)
+
+        # High confidence scenarios
+        if first_speaker == "SPEAKER_0" and speaker_0_is_agent:
+            print("High confidence: SPEAKER_0 is AGENT (speaks first + uses greetings)")
+            return {"SPEAKER_0": "AGENT", "SPEAKER_1": "CALLER"}, True
+
+        elif first_speaker == "SPEAKER_1" and speaker_1_is_agent:
+            print("High confidence: SPEAKER_1 is AGENT (speaks first + uses greetings)")
+            return {"SPEAKER_1": "AGENT", "SPEAKER_0": "CALLER"}, True
+
+        elif speaker_0_is_agent and not speaker_1_is_agent:
+            print("Medium confidence: SPEAKER_0 is AGENT (uses greetings)")
+            return {"SPEAKER_0": "AGENT", "SPEAKER_1": "CALLER"}, True
+
+        elif speaker_1_is_agent and not speaker_0_is_agent:
+            print("Medium confidence: SPEAKER_1 is AGENT (uses greetings)")
+            return {"SPEAKER_1": "AGENT", "SPEAKER_0": "CALLER"}, True
+
+        else:
+            # Low confidence - use generic labels
+            print("Low confidence: Unable to determine agent/caller, using SPEAKER_A/SPEAKER_B")
+            return {"SPEAKER_0": "SPEAKER_A", "SPEAKER_1": "SPEAKER_B"}, False

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import conversationApi from './api';
+import EmotionChart from './components/EmotionChart';
 
 interface FileStatus {
   file: File;
@@ -10,6 +11,22 @@ interface FileStatus {
   progress?: string;
   error?: string;
   isPolling?: boolean;
+  emotionData?: {
+    speaker_a: {
+      top_5_emotions: string[];
+      emotion_vector: number[];
+    };
+    speaker_b: {
+      top_5_emotions: string[];
+      emotion_vector: number[];
+    };
+    timelines: {
+      speaker_a: Array<{time: number, emotions: Record<string, number>}>;
+      speaker_b: Array<{time: number, emotions: Record<string, number>}>;
+    };
+    speaker_labels: Record<string, string>;
+    labeling_confidence: boolean;
+  };
 }
 
 interface QueryResponse {
@@ -57,6 +74,16 @@ function App() {
     try {
       const status = await conversationApi.getStatus(batchId);
 
+      // Extract emotion data from status details
+      const emotionDataRaw = status.details?.emotion_data;
+      const emotionData = emotionDataRaw ? {
+        speaker_a: emotionDataRaw.speaker_a || { top_5_emotions: [], emotion_vector: [] },
+        speaker_b: emotionDataRaw.speaker_b || { top_5_emotions: [], emotion_vector: [] },
+        timelines: emotionDataRaw.timelines || { speaker_a: [], speaker_b: [] },
+        speaker_labels: status.details?.speaker_labels || {},
+        labeling_confidence: status.details?.labeling_confidence || false
+      } : undefined;
+
       setFileStatuses(prev => prev.map(fs =>
         fs.id === fileId ? {
           ...fs,
@@ -65,7 +92,8 @@ function App() {
                   'processing',
           progress: status.progress,
           error: status.status === 'failed' || status.status === 'processing_failed' ?
-                 'Processing failed' : undefined
+                 'Processing failed' : undefined,
+          emotionData: emotionData
         } : fs
       ));
 
@@ -489,6 +517,69 @@ function App() {
                             </svg>
                           </button>
                         </div>
+
+                        {/* Emotion Analysis Section */}
+                        {fs.status === 'completed' && fs.emotionData && (
+                          <div className="mt-4 pt-4 border-t border-white/20">
+                            <h4 className="text-sm font-semibold text-purple-200 mb-3 flex items-center gap-2">
+                              Emotion Analysis
+                              {!fs.emotionData.labeling_confidence && (
+                                <span className="text-xs text-yellow-300 bg-yellow-500/20 px-2 py-1 rounded-full">
+                                  ⚠ Low confidence labeling
+                                </span>
+                              )}
+                            </h4>
+
+                            {/* Top Emotions Badges */}
+                            <div className="grid grid-cols-2 gap-3 mb-4">
+                              <div>
+                                <p className="text-xs text-purple-300 mb-1">
+                                  {Object.values(fs.emotionData.speaker_labels)[0] || 'Speaker A'}:
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  {fs.emotionData.speaker_a.top_5_emotions.map((emotion, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-2 py-1 bg-red-500/30 text-red-200 text-xs rounded-full"
+                                    >
+                                      {emotion}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div>
+                                <p className="text-xs text-purple-300 mb-1">
+                                  {Object.values(fs.emotionData.speaker_labels)[1] || 'Speaker B'}:
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  {fs.emotionData.speaker_b.top_5_emotions.map((emotion, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-2 py-1 bg-blue-500/30 text-blue-200 text-xs rounded-full"
+                                    >
+                                      {emotion}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Emotion Timeline Chart */}
+                            {fs.emotionData.timelines && fs.emotionData.timelines.speaker_a.length > 0 && (
+                              <EmotionChart
+                                speakerATimeline={fs.emotionData.timelines.speaker_a}
+                                speakerBTimeline={fs.emotionData.timelines.speaker_b}
+                                speakerALabel={Object.values(fs.emotionData.speaker_labels)[0] || 'SPEAKER_A'}
+                                speakerBLabel={Object.values(fs.emotionData.speaker_labels)[1] || 'SPEAKER_B'}
+                                topEmotions={[
+                                  ...fs.emotionData.speaker_a.top_5_emotions,
+                                  ...fs.emotionData.speaker_b.top_5_emotions
+                                ].filter((v, i, a) => a.indexOf(v) === i).slice(0, 5)}
+                              />
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
