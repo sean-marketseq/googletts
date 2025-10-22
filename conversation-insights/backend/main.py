@@ -467,7 +467,14 @@ async def get_batch_status(batch_id: str):
         hume_status = {"state": "N/A"}
         if hume_job_id:
             try:
-                hume_status = hume_client.get_job_status(hume_job_id)
+                hume_raw = hume_client.get_job_status(hume_job_id)
+                # Sanitize Hume response - only extract serializable fields
+                hume_status = {
+                    "state": hume_raw.get("state", "UNKNOWN"),
+                    "message": hume_raw.get("message", "")
+                }
+                if "error" in hume_raw:
+                    hume_status["error"] = str(hume_raw["error"])
             except Exception as e:
                 print(f"Error checking Hume job status: {e}")
                 hume_status = {"state": "ERROR", "error": str(e)}
