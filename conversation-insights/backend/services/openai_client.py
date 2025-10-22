@@ -282,7 +282,7 @@ Please provide a clear, well-structured answer."""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.5,
+            # GPT-5 only supports default temperature=1, custom values not allowed
             max_completion_tokens=1000
         )
 
