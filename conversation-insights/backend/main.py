@@ -436,6 +436,19 @@ async def get_batch_status(batch_id: str):
         embedding_status = openai_client.check_batch(embedding_batch_id) if embedding_batch_id else None
         extraction_status = openai_client.check_batch(extraction_batch_id) if extraction_batch_id else None
 
+        # Log batch statuses for debugging
+        if embedding_status:
+            print(f"[STATUS] Embedding batch {embedding_batch_id}: {embedding_status['status']} - {embedding_status['request_counts']}")
+        if extraction_status:
+            print(f"[STATUS] Extraction batch {extraction_batch_id}: {extraction_status['status']} - {extraction_status['request_counts']}")
+            # Check for errors if extraction batch has failed requests
+            if extraction_status['request_counts']['failed'] > 0:
+                errors = openai_client.get_batch_errors(extraction_batch_id)
+                if errors:
+                    print(f"[ERROR] Extraction batch has {len(errors)} errors:")
+                    for i, error in enumerate(errors[:3]):  # Log first 3 errors
+                        print(f"[ERROR {i+1}] {error}")
+
         # Check Hume job status with error handling
         hume_status = {"state": "N/A"}
         if hume_job_id:
@@ -573,6 +586,28 @@ async def get_batch_status(batch_id: str):
         print(f"Error checking batch status: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to check status: {str(e)}")
+
+
+@app.get("/debug/batch/{batch_id}")
+async def debug_batch(batch_id: str):
+    """
+    Debug endpoint to inspect batch details and errors
+    """
+    try:
+        batch_status = openai_client.check_batch(batch_id)
+        batch_errors = openai_client.get_batch_errors(batch_id)
+
+        return {
+            "batch_id": batch_id,
+            "status": batch_status,
+            "error_count": len(batch_errors),
+            "errors": batch_errors[:10]  # First 10 errors
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 
 
 @app.post("/query", response_model=QueryResponse)

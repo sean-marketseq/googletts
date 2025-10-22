@@ -93,6 +93,36 @@ class OpenAIBatchClient:
             "error_file_id": batch.error_file_id
         }
 
+    def get_batch_errors(self, batch_id: str) -> List[Dict[str, Any]]:
+        """
+        Download and parse batch errors if any exist
+
+        Args:
+            batch_id: The batch job identifier
+
+        Returns:
+            List of error objects or empty list if no errors
+        """
+        batch = self.client.batches.retrieve(batch_id)
+
+        if not batch.error_file_id:
+            return []
+
+        try:
+            # Download the error file
+            error_response = self.client.files.content(batch.error_file_id)
+
+            # Parse JSONL errors
+            errors = []
+            for line in error_response.text.strip().split('\n'):
+                if line:
+                    errors.append(json.loads(line))
+
+            return errors
+        except Exception as e:
+            print(f"Error retrieving batch errors: {e}")
+            return []
+
     def get_results(self, batch_id: str) -> List[Dict[str, Any]]:
         """
         Download and parse batch results
