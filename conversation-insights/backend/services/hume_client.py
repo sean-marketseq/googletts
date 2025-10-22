@@ -176,7 +176,14 @@ class HumeClient:
                     if "results" in result and "predictions" in result["results"]:
                         for pred_group in result["results"]["predictions"]:
                             if "models" in pred_group and "prosody" in pred_group["models"]:
-                                prosody_predictions.extend(pred_group["models"]["prosody"]["grouped_predictions"])
+                                grouped = pred_group["models"]["prosody"]["grouped_predictions"]
+                                # Extract predictions from each grouped prediction
+                                for group in grouped:
+                                    if "predictions" in group:
+                                        prosody_predictions.extend(group["predictions"])
+                                    else:
+                                        # Fallback: use the group itself if no nested predictions
+                                        prosody_predictions.append(group)
                     # Check for direct predictions array structure (what we're actually getting)
                     elif "predictions" in result:
                         print(f"DEBUG: Found 'predictions' array with {len(result['predictions'])} items")
