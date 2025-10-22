@@ -73,21 +73,21 @@ class OpenAIBatchClient:
             batch_id: The batch job identifier
 
         Returns:
-            Dictionary with status information
+            Dictionary with status information (all values are JSON-serializable)
         """
         batch = self.client.batches.retrieve(batch_id)
 
         return {
             "id": batch.id,
             "status": batch.status,
-            "created_at": batch.created_at,
-            "completed_at": batch.completed_at,
-            "failed_at": batch.failed_at,
-            "expired_at": batch.expired_at,
+            "created_at": int(batch.created_at) if batch.created_at else None,
+            "completed_at": int(batch.completed_at) if batch.completed_at else None,
+            "failed_at": int(batch.failed_at) if batch.failed_at else None,
+            "expired_at": int(batch.expired_at) if batch.expired_at else None,
             "request_counts": {
-                "total": batch.request_counts.total,
-                "completed": batch.request_counts.completed,
-                "failed": batch.request_counts.failed
+                "total": int(batch.request_counts.total),
+                "completed": int(batch.request_counts.completed),
+                "failed": int(batch.request_counts.failed)
             },
             "output_file_id": batch.output_file_id,
             "error_file_id": batch.error_file_id
