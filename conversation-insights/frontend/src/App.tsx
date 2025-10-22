@@ -74,6 +74,7 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]); // Queue of file IDs to process
   const [activeUploads, setActiveUploads] = useState<Set<string>>(new Set());
+  const [expandedDetails, setExpandedDetails] = useState<Set<string>>(new Set());
 
   // Query state
   const [query, setQuery] = useState('');
@@ -380,6 +381,19 @@ function App() {
     }
   };
 
+  // Toggle details expansion
+  const toggleDetails = (fileId: string) => {
+    setExpandedDetails(prev => {
+      const next = new Set(prev);
+      if (next.has(fileId)) {
+        next.delete(fileId);
+      } else {
+        next.add(fileId);
+      }
+      return next;
+    });
+  };
+
   // Get status counts
   const statusCounts = {
     queued: fileStatuses.filter(fs => fs.status === 'queued').length,
@@ -533,16 +547,109 @@ function App() {
                             )}
                           </div>
 
-                          <button
-                            onClick={() => handleRemoveFile(fs.id)}
-                            className="text-purple-300 hover:text-red-400 transition-colors flex-shrink-0"
-                            title="Remove"
-                          >
-                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"/>
-                            </svg>
-                          </button>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {/* Details Toggle Button */}
+                            {(fs.batchId || fs.batchDiagnostics) && (
+                              <button
+                                onClick={() => toggleDetails(fs.id)}
+                                className="text-purple-300 hover:text-purple-100 transition-colors p-1"
+                                title="Toggle details"
+                              >
+                                <svg
+                                  className={`w-5 h-5 transition-transform ${expandedDetails.has(fs.id) ? 'rotate-180' : ''}`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                            )}
+
+                            {/* Remove Button */}
+                            <button
+                              onClick={() => handleRemoveFile(fs.id)}
+                              className="text-purple-300 hover:text-red-400 transition-colors"
+                              title="Remove"
+                            >
+                              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"/>
+                              </svg>
+                            </button>
+                          </div>
                         </div>
+
+                        {/* Processing Details Panel */}
+                        {expandedDetails.has(fs.id) && (fs.batchId || fs.batchDiagnostics) && (
+                          <div className="mt-3 pt-3 border-t border-white/10">
+                            <div className="space-y-2 text-xs">
+                              {/* Batch ID */}
+                              {fs.batchId && (
+                                <div className="flex items-start gap-2">
+                                  <span className="text-purple-400 font-semibold min-w-[80px]">Batch ID:</span>
+                                  <span className="text-purple-200 font-mono text-[10px] break-all">{fs.batchId}</span>
+                                </div>
+                              )}
+
+                              {/* Conversation ID */}
+                              {fs.conversationId && (
+                                <div className="flex items-start gap-2">
+                                  <span className="text-purple-400 font-semibold min-w-[80px]">Conv ID:</span>
+                                  <span className="text-purple-200 font-mono text-[10px]">{fs.conversationId}</span>
+                                </div>
+                              )}
+
+                              {/* Batch Diagnostics */}
+                              {fs.batchDiagnostics && (
+                                <div className="space-y-2 mt-3">
+                                  {/* Embedding Batch */}
+                                  {fs.batchDiagnostics.embedding_batch && (
+                                    <div className="bg-blue-500/10 border border-blue-400/20 rounded p-2">
+                                      <div className="font-semibold text-blue-300 mb-1">Embeddings</div>
+                                      <div className="space-y-1 text-[10px]">
+                                        <div className="flex justify-between">
+                                          <span className="text-blue-200/70">Status:</span>
+                                          <span className="text-blue-200 font-mono">{String(fs.batchDiagnostics.embedding_batch.status)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-blue-200/70">Progress:</span>
+                                          <span className="text-blue-200 font-mono">{String(fs.batchDiagnostics.embedding_batch.progress)}</span>
+                                        </div>
+                                        {fs.batchDiagnostics.embedding_batch.time_elapsed_min && (
+                                          <div className="flex justify-between">
+                                            <span className="text-blue-200/70">Time:</span>
+                                            <span className="text-blue-200 font-mono">{String(fs.batchDiagnostics.embedding_batch.time_elapsed_min)} min</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Hume Job */}
+                                  {fs.batchDiagnostics.hume_job && (
+                                    <div className="bg-purple-500/10 border border-purple-400/20 rounded p-2">
+                                      <div className="font-semibold text-purple-300 mb-1">Hume Analysis</div>
+                                      <div className="space-y-1 text-[10px]">
+                                        <div className="flex justify-between">
+                                          <span className="text-purple-200/70">Status:</span>
+                                          <span className="text-purple-200 font-mono">{String(fs.batchDiagnostics.hume_job.status)}</span>
+                                        </div>
+                                        {fs.batchDiagnostics.hume_job.message && (
+                                          <div className="text-purple-200/70 italic">{String(fs.batchDiagnostics.hume_job.message)}</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Progress Message */}
+                              {fs.progress && !fs.batchDiagnostics && (
+                                <div className="text-purple-300 italic">{fs.progress}</div>
+                              )}
+                            </div>
+                          </div>
+                        )}
 
                         {/* BATCH DIAGNOSTICS TEMPORARILY DISABLED - CAUSING REACT CRASH
                         {fs.status === 'processing' && fs.batchDiagnostics && (
