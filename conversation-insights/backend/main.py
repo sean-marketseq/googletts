@@ -595,7 +595,6 @@ async def get_batch_status(batch_id: str):
                 "status": embedding_status["status"] if embedding_status else "N/A",
                 "progress": f"{embedding_status['request_counts']['completed']}/{embedding_status['request_counts']['total']}" if embedding_status else "N/A",
                 "failed": embedding_status['request_counts']['failed'] if embedding_status else 0,
-                "created_at": embedding_status.get("created_at") if embedding_status else None,
                 "time_elapsed_min": round((current_time - embedding_status["created_at"]) / 60, 1) if embedding_status and embedding_status.get("created_at") else None
             } if embedding_batch_id else None,
             "extraction_batch": {
@@ -603,12 +602,12 @@ async def get_batch_status(batch_id: str):
                 "status": extraction_status["status"] if extraction_status else "N/A",
                 "progress": f"{extraction_status['request_counts']['completed']}/{extraction_status['request_counts']['total']}" if extraction_status else "N/A",
                 "failed": extraction_status['request_counts']['failed'] if extraction_status else 0,
-                "created_at": extraction_status.get("created_at") if extraction_status else None,
                 "time_elapsed_min": round((current_time - extraction_status["created_at"]) / 60, 1) if extraction_status and extraction_status.get("created_at") else None
             } if extraction_batch_id else None,
             "hume_job": {
                 "id": hume_job_id,
-                "status": hume_status.get("state", "N/A")
+                "status": hume_status.get("state", "N/A"),
+                "message": hume_status.get("message", "")
             } if hume_job_id else None
         }
 
@@ -619,9 +618,6 @@ async def get_batch_status(batch_id: str):
             conversation_id=stored_info["conversation_id"],
             details={
                 "batch_diagnostics": batch_diagnostics,
-                "embedding_status": embedding_status,
-                "extraction_status": extraction_status,
-                "hume_status": hume_status,
                 "emotion_data_ready": stored_info.get("emotion_data") is not None,
                 "emotion_data": stored_info.get("emotion_data"),
                 "speaker_labels": stored_info.get("speaker_labels"),
