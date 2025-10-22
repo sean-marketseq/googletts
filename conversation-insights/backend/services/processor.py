@@ -120,14 +120,13 @@ Conversation chunk:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a conversation analysis assistant. Extract structured data from conversations and return only valid JSON."
+                        "content": "You are a conversation analysis assistant. Extract structured data from conversations and return only valid JSON. Your response must be valid JSON only, no other text."
                     },
                     {
                         "role": "user",
                         "content": extraction_prompt + chunk["text"]
                     }
                 ],
-                "response_format": {"type": "json_object"},
                 "temperature": 0.3
             }
         })
