@@ -229,14 +229,19 @@ async def upload_audio(
 
         print(f"Speaker labeling: {speaker_labels} (confidence: {labeling_confidence})")
 
-        # === STEP 2: Submit to Hume ===
-        hume_callback_url = os.getenv("HUME_CALLBACK_URL")
-        hume_job_id = hume_client.submit_audio(
-            io.BytesIO(audio_content),
-            file.filename,
-            callback_url=hume_callback_url
-        )
-        print(f"Hume job submitted: {hume_job_id}")
+        # === STEP 2: Submit to Hume (with error handling) ===
+        hume_job_id = None
+        try:
+            hume_callback_url = os.getenv("HUME_CALLBACK_URL")
+            hume_job_id = hume_client.submit_audio(
+                io.BytesIO(audio_content),
+                file.filename,
+                callback_url=hume_callback_url
+            )
+            print(f"Hume job submitted: {hume_job_id}")
+        except Exception as e:
+            print(f"Warning: Hume submission failed: {e}")
+            print("Continuing with OpenAI processing only...")
 
         # === STEP 3: Chunk transcript ===
         transcript = diarization["full_transcript"]
@@ -431,32 +436,45 @@ async def get_batch_status(batch_id: str):
         embedding_status = openai_client.check_batch(embedding_batch_id) if embedding_batch_id else None
         extraction_status = openai_client.check_batch(extraction_batch_id) if extraction_batch_id else None
 
-        # Check Hume job status
-        hume_status = hume_client.get_job_status(hume_job_id) if hume_job_id else {"state": "N/A"}
+        # Check Hume job status with error handling
+        hume_status = {"state": "N/A"}
+        if hume_job_id:
+            try:
+                hume_status = hume_client.get_job_status(hume_job_id)
+            except Exception as e:
+                print(f"Error checking Hume job status: {e}")
+                hume_status = {"state": "ERROR", "error": str(e)}
 
         # Calculate combined progress
         jobs_completed = 0
-        total_jobs = 3
 
         embedding_done = embedding_status and embedding_status["status"] == "completed"
         extraction_done = extraction_status and extraction_status["status"] == "completed"
         hume_done = hume_status.get("state") == "COMPLETED"
 
-        if embedding_done:
-            jobs_completed += 1
-        if extraction_done:
-            jobs_completed += 1
-        if hume_done:
-            jobs_completed += 1
-
-        progress = f"{jobs_completed}/{total_jobs} jobs complete (OpenAI + Hume)"
-
-        # All 3 jobs must be completed
-        all_completed = embedding_done and extraction_done and hume_done
+        # Only count Hume if it was submitted
+        if hume_job_id:
+            total_jobs = 3
+            if embedding_done:
+                jobs_completed += 1
+            if extraction_done:
+                jobs_completed += 1
+            if hume_done:
+                jobs_completed += 1
+            progress = f"{jobs_completed}/{total_jobs} jobs complete (OpenAI + Hume)"
+            all_completed = embedding_done and extraction_done and hume_done
+        else:
+            total_jobs = 2
+            if embedding_done:
+                jobs_completed += 1
+            if extraction_done:
+                jobs_completed += 1
+            progress = f"{jobs_completed}/{total_jobs} jobs complete (OpenAI only)"
+            all_completed = embedding_done and extraction_done
 
         # Process and upsert if all done
         if all_completed and stored_info.get("processed") != True:
-            print(f"All 3 jobs completed for {stored_info['conversation_id']}, processing...")
+            print(f"All jobs completed for {stored_info['conversation_id']}, processing...")
 
             try:
                 # Get OpenAI batch results
