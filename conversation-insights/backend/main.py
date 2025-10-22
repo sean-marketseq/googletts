@@ -577,14 +577,6 @@ async def get_batch_status(batch_id: str):
                 stored_info["processed"] = True
                 stored_info["status"] = "completed_and_stored"
 
-                # Mark paired batches as processed too
-                if extraction_batch_id and extraction_batch_id in batch_storage:
-                    batch_storage[extraction_batch_id]["processed"] = True
-                    batch_storage[extraction_batch_id]["status"] = "completed_and_stored"
-                if embedding_batch_id and embedding_batch_id in batch_storage:
-                    batch_storage[embedding_batch_id]["processed"] = True
-                    batch_storage[embedding_batch_id]["status"] = "completed_and_stored"
-
                 print(f"Successfully stored {len(conversation_records)} conversation records + 1 emotion record")
 
             except Exception as e:
@@ -620,11 +612,22 @@ async def get_batch_status(batch_id: str):
             } if hume_job_id else None
         }
 
-        # Build response details
+        # Build response details - sanitize emotion_data for serialization
+        emotion_data = stored_info.get("emotion_data", {})
+        emotion_summary = None
+        if emotion_data:
+            emotion_summary = {
+                "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
+                "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
+                "speaker_a_peak": emotion_data.get("speaker_a", {}).get("peak_emotion"),
+                "speaker_b_peak": emotion_data.get("speaker_b", {}).get("peak_emotion"),
+                "hume_job_status": emotion_data.get("hume_job_status", "unknown")
+            }
+
         details = {
             "batch_diagnostics": batch_diagnostics,
-            "emotion_data_ready": stored_info.get("emotion_data") is not None,
-            "emotion_data": stored_info.get("emotion_data"),
+            "emotion_data_ready": emotion_data is not None,
+            "emotion_summary": emotion_summary,
             "speaker_labels": stored_info.get("speaker_labels"),
             "labeling_confidence": stored_info.get("labeling_confidence")
         }
