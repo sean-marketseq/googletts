@@ -353,8 +353,13 @@ async def hume_callback(request: Request):
 
             print(f"Processing Hume results for job: {job_id}")
 
-            # Fetch predictions
-            predictions = hume_client.get_predictions(job_id)
+            # Use predictions from webhook if available, otherwise fetch via API
+            if "predictions" in payload:
+                print("Using predictions from webhook payload")
+                predictions = payload["predictions"]
+            else:
+                print("Fetching predictions via API")
+                predictions = hume_client.get_predictions(job_id)
 
             # Align with speakers
             aligned = hume_client.align_emotions_with_speakers(
