@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import conversationApi from './api';
 
-interface UploadStatus {
-  batchId: string;
-  conversationId: string;
-  status: string;
-  progress: string;
-  isPolling: boolean;
-  filename: string;
+interface FileStatus {
+  file: File;
+  id: string;
+  status: 'queued' | 'uploading' | 'transcribing' | 'processing' | 'completed' | 'error';
+  batchId?: string;
+  conversationId?: string;
+  progress?: string;
+  error?: string;
+  isPolling?: boolean;
 }
 
 interface QueryResponse {
@@ -25,12 +27,14 @@ interface Source {
   intents: string[];
 }
 
+const MAX_CONCURRENT_UPLOADS = 2; // Process 2 files at a time
+
 function App() {
   // Upload state
-  const [file, setFile] = useState<File | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<UploadStatus | null>(null);
-  const [uploadError, setUploadError] = useState<string>('');
-  const [isUploading, setIsUploading] = useState(false);
+  const [fileStatuses, setFileStatuses] = useState<FileStatus[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<string[]>([]); // Queue of file IDs to process
+  const [activeUploads, setActiveUploads] = useState<Set<string>>(new Set());
 
   // Query state
   const [query, setQuery] = useState('');
@@ -42,105 +46,228 @@ function App() {
   const [isPurging, setIsPurging] = useState(false);
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
 
-  // Polling interval ref
-  const pollingIntervalRef = useRef<number | null>(null);
+  // Polling intervals ref (now a Map)
+  const pollingIntervalsRef = useRef<Map<string, number>>(new Map());
 
-  // Poll batch status
-  const pollStatus = async (batchId: string) => {
+  // Allowed file extensions
+  const allowedExtensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm'];
+
+  // Poll batch status for a specific file
+  const pollStatus = async (fileId: string, batchId: string) => {
     try {
       const status = await conversationApi.getStatus(batchId);
 
-      setUploadStatus(prev => prev ? {
-        ...prev,
-        status: status.status,
-        progress: status.progress
-      } : null);
+      setFileStatuses(prev => prev.map(fs =>
+        fs.id === fileId ? {
+          ...fs,
+          status: status.status === 'completed_and_stored' ? 'completed' :
+                  status.status === 'failed' || status.status === 'processing_failed' ? 'error' :
+                  'processing',
+          progress: status.progress,
+          error: status.status === 'failed' || status.status === 'processing_failed' ?
+                 'Processing failed' : undefined
+        } : fs
+      ));
 
       // Stop polling if completed or failed
       if (status.status === 'completed_and_stored' ||
           status.status === 'processing_failed' ||
           status.status === 'failed') {
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-          setUploadStatus(prev => prev ? { ...prev, isPolling: false } : null);
+        const intervalId = pollingIntervalsRef.current.get(fileId);
+        if (intervalId) {
+          clearInterval(intervalId);
+          pollingIntervalsRef.current.delete(fileId);
         }
+
+        // Remove from active uploads
+        setActiveUploads(prev => {
+          const next = new Set(prev);
+          next.delete(fileId);
+          return next;
+        });
       }
     } catch (error: any) {
       console.error('Error polling status:', error);
-      setUploadError(error.response?.data?.detail || 'Failed to check status');
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
+      setFileStatuses(prev => prev.map(fs =>
+        fs.id === fileId ? {
+          ...fs,
+          status: 'error',
+          error: 'Failed to check status'
+        } : fs
+      ));
+
+      const intervalId = pollingIntervalsRef.current.get(fileId);
+      if (intervalId) {
+        clearInterval(intervalId);
+        pollingIntervalsRef.current.delete(fileId);
       }
+
+      setActiveUploads(prev => {
+        const next = new Set(prev);
+        next.delete(fileId);
+        return next;
+      });
     }
   };
 
-  // Start polling when batch is submitted
-  useEffect(() => {
-    if (uploadStatus?.isPolling && uploadStatus.batchId) {
-      pollingIntervalRef.current = setInterval(() => {
-        pollStatus(uploadStatus.batchId);
-      }, 5000);
+  // Process next file in queue
+  const processNextFile = async (fileId: string) => {
+    const fileStatus = fileStatuses.find(fs => fs.id === fileId);
+    if (!fileStatus) return;
 
-      return () => {
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-        }
-      };
-    }
-  }, [uploadStatus?.isPolling, uploadStatus?.batchId]);
+    setActiveUploads(prev => new Set(prev).add(fileId));
 
-  // Handle file selection
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      const allowedExtensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm'];
-
-      const fileExt = selectedFile.name.toLowerCase().slice(selectedFile.name.lastIndexOf('.'));
-
-      if (!allowedExtensions.includes(fileExt)) {
-        setUploadError(`Please select an audio file (${allowedExtensions.join(', ')})`);
-        return;
-      }
-
-      setFile(selectedFile);
-      setUploadError('');
-    }
-  };
-
-  // Handle file upload
-  const handleUpload = async () => {
-    if (!file) {
-      setUploadError('Please select a file first');
-      return;
-    }
-
-    setIsUploading(true);
-    setUploadError('');
+    setFileStatuses(prev => prev.map(fs =>
+      fs.id === fileId ? { ...fs, status: 'uploading' as const } : fs
+    ));
 
     try {
-      const response = await conversationApi.uploadAudio(file);
+      const response = await conversationApi.uploadAudio(fileStatus.file);
 
-      setUploadStatus({
-        batchId: response.batch_id,
-        conversationId: response.conversation_id,
-        status: response.status,
-        progress: `0/${response.chunks} chunks`,
-        isPolling: true,
-        filename: file.name
-      });
+      setFileStatuses(prev => prev.map(fs =>
+        fs.id === fileId ? {
+          ...fs,
+          status: 'processing' as const,
+          batchId: response.batch_id,
+          conversationId: response.conversation_id,
+          progress: `0/${response.chunks} chunks`,
+          isPolling: true
+        } : fs
+      ));
 
-      setFile(null);
-      const fileInput = document.getElementById('file-upload') as HTMLInputElement;
-      if (fileInput) fileInput.value = '';
+      // Start polling for this file
+      const intervalId = setInterval(() => {
+        pollStatus(fileId, response.batch_id);
+      }, 5000);
+
+      pollingIntervalsRef.current.set(fileId, intervalId);
 
     } catch (error: any) {
       console.error('Upload error:', error);
-      setUploadError(error.response?.data?.detail || 'Failed to upload audio file');
-    } finally {
-      setIsUploading(false);
+      setFileStatuses(prev => prev.map(fs =>
+        fs.id === fileId ? {
+          ...fs,
+          status: 'error' as const,
+          error: error.response?.data?.detail || 'Failed to upload audio file'
+        } : fs
+      ));
+
+      setActiveUploads(prev => {
+        const next = new Set(prev);
+        next.delete(fileId);
+        return next;
+      });
     }
+  };
+
+  // Watch upload queue and process files
+  useEffect(() => {
+    if (uploadQueue.length === 0) return;
+    if (activeUploads.size >= MAX_CONCURRENT_UPLOADS) return;
+
+    const nextFileId = uploadQueue[0];
+    setUploadQueue(prev => prev.slice(1));
+    processNextFile(nextFileId);
+  }, [uploadQueue, activeUploads.size]);
+
+  // Handle file selection
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+
+    const validFiles: FileStatus[] = [];
+    const errors: string[] = [];
+
+    Array.from(files).forEach(file => {
+      const fileExt = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+
+      if (!allowedExtensions.includes(fileExt)) {
+        errors.push(`${file.name}: Invalid file type`);
+        return;
+      }
+
+      validFiles.push({
+        file,
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        status: 'queued'
+      });
+    });
+
+    if (errors.length > 0) {
+      alert('Some files were skipped:\n' + errors.join('\n'));
+    }
+
+    if (validFiles.length > 0) {
+      setFileStatuses(prev => [...prev, ...validFiles]);
+      setUploadQueue(prev => [...prev, ...validFiles.map(f => f.id)]);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFiles(e.target.files);
+    e.target.value = ''; // Reset input so same file can be added again
+  };
+
+  // Drag and drop handlers
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget === e.target) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    handleFiles(e.dataTransfer.files);
+  };
+
+  // Remove file from list
+  const handleRemoveFile = (fileId: string) => {
+    // Stop polling if active
+    const intervalId = pollingIntervalsRef.current.get(fileId);
+    if (intervalId) {
+      clearInterval(intervalId);
+      pollingIntervalsRef.current.delete(fileId);
+    }
+
+    setFileStatuses(prev => prev.filter(fs => fs.id !== fileId));
+    setUploadQueue(prev => prev.filter(id => id !== fileId));
+    setActiveUploads(prev => {
+      const next = new Set(prev);
+      next.delete(fileId);
+      return next;
+    });
+  };
+
+  // Clear all completed/errored files
+  const handleClearCompleted = () => {
+    fileStatuses.forEach(fs => {
+      if (fs.status === 'completed' || fs.status === 'error') {
+        const intervalId = pollingIntervalsRef.current.get(fs.id);
+        if (intervalId) {
+          clearInterval(intervalId);
+          pollingIntervalsRef.current.delete(fs.id);
+        }
+      }
+    });
+
+    setFileStatuses(prev => prev.filter(fs =>
+      fs.status !== 'completed' && fs.status !== 'error'
+    ));
   };
 
   // Handle query submission
@@ -179,10 +306,15 @@ function App() {
       await conversationApi.purgeIndex();
 
       // Clear local state
-      setUploadStatus(null);
+      setFileStatuses([]);
+      setUploadQueue([]);
+      setActiveUploads(new Set());
       setQueryResult(null);
-      setUploadError('');
       setQueryError('');
+
+      // Clear all polling intervals
+      pollingIntervalsRef.current.forEach(intervalId => clearInterval(intervalId));
+      pollingIntervalsRef.current.clear();
 
       alert('✓ All data purged successfully!');
     } catch (error: any) {
@@ -192,6 +324,14 @@ function App() {
       setIsPurging(false);
       setShowPurgeConfirm(false);
     }
+  };
+
+  // Get status counts
+  const statusCounts = {
+    queued: fileStatuses.filter(fs => fs.status === 'queued').length,
+    processing: fileStatuses.filter(fs => ['uploading', 'transcribing', 'processing'].includes(fs.status)).length,
+    completed: fileStatuses.filter(fs => fs.status === 'completed').length,
+    error: fileStatuses.filter(fs => fs.status === 'error').length,
   };
 
   return (
@@ -224,117 +364,140 @@ function App() {
             </div>
 
             <p className="text-purple-200 text-center mb-8">
-              Upload audio files to transcribe and index for searching
+              Upload multiple audio files to transcribe and index for searching
             </p>
 
             <div className="space-y-6">
-              {/* File Input */}
-              <div>
-                <label className="block text-sm font-semibold text-purple-200 mb-3">
-                  Select Audio File
-                </label>
-                <div className="relative">
-                  <input
-                    id="file-upload"
-                    type="file"
-                    accept=".mp3,.wav,.m4a,.mp4,.mpeg,.mpga,.webm,audio/*"
-                    onChange={handleFileChange}
-                    className="block w-full text-sm text-purple-200
-                      file:mr-4 file:py-3 file:px-6
-                      file:rounded-full file:border-0
-                      file:text-sm file:font-semibold
-                      file:bg-gradient-to-r file:from-blue-500 file:to-purple-500
-                      file:text-white
-                      hover:file:from-blue-600 hover:file:to-purple-600
-                      file:cursor-pointer
-                      cursor-pointer
-                      bg-white/5 rounded-lg p-3 border border-white/20"
-                  />
+              {/* Drag and Drop Zone */}
+              <div
+                onDragEnter={handleDragEnter}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 ${
+                  isDragging
+                    ? 'border-blue-400 bg-blue-500/20 scale-105'
+                    : 'border-white/30 bg-white/5 hover:border-white/50'
+                }`}
+              >
+                <input
+                  id="file-upload"
+                  type="file"
+                  accept=".mp3,.wav,.m4a,.mp4,.mpeg,.mpga,.webm,audio/*"
+                  onChange={handleFileChange}
+                  multiple
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+
+                <div className="pointer-events-none">
+                  <svg className="w-16 h-16 mx-auto mb-4 text-purple-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  <p className="text-lg font-semibold text-purple-100 mb-2">
+                    {isDragging ? 'Drop files here' : 'Drag & drop audio files'}
+                  </p>
+                  <p className="text-sm text-purple-300 mb-4">or click to browse</p>
+                  <p className="text-xs text-purple-400">
+                    Supported: MP3, WAV, M4A, MP4, MPEG, WebM
+                  </p>
                 </div>
-                {file && (
-                  <div className="mt-3 p-3 bg-green-500/20 border border-green-400/30 rounded-lg">
-                    <p className="text-sm text-green-200 flex items-center">
-                      <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
-                        <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd"/>
-                      </svg>
-                      Selected: {file.name}
-                    </p>
-                  </div>
-                )}
-                <p className="mt-2 text-xs text-purple-300">
-                  Supported formats: MP3, WAV, M4A, MP4, MPEG, WebM
-                </p>
               </div>
 
-              {/* Upload Button */}
-              <button
-                onClick={handleUpload}
-                disabled={!file || isUploading}
-                className="w-full bg-gradient-to-r from-blue-500 to-purple-500 text-white py-4 px-6 rounded-xl
-                  hover:from-blue-600 hover:to-purple-600
-                  disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed
-                  transition-all duration-200 font-bold text-lg shadow-lg
-                  transform hover:scale-105 disabled:transform-none"
-              >
-                {isUploading ? (
-                  <span className="flex items-center justify-center">
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Transcribing & Processing...
-                  </span>
-                ) : 'Upload & Add to Index'}
-              </button>
-
-              {/* Upload Error */}
-              {uploadError && (
-                <div className="p-4 bg-red-500/20 border border-red-400/30 rounded-xl text-red-200 text-sm">
-                  {uploadError}
+              {/* Status Summary */}
+              {fileStatuses.length > 0 && (
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="bg-yellow-500/20 border border-yellow-400/30 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-yellow-200">{statusCounts.queued}</div>
+                    <div className="text-xs text-yellow-300">Queued</div>
+                  </div>
+                  <div className="bg-blue-500/20 border border-blue-400/30 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-blue-200">{statusCounts.processing}</div>
+                    <div className="text-xs text-blue-300">Processing</div>
+                  </div>
+                  <div className="bg-green-500/20 border border-green-400/30 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-green-200">{statusCounts.completed}</div>
+                    <div className="text-xs text-green-300">Completed</div>
+                  </div>
+                  <div className="bg-red-500/20 border border-red-400/30 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-red-200">{statusCounts.error}</div>
+                    <div className="text-xs text-red-300">Errors</div>
+                  </div>
                 </div>
               )}
 
-              {/* Upload Status */}
-              {uploadStatus && (
-                <div className="p-6 bg-blue-500/20 border border-blue-400/30 rounded-xl space-y-3">
-                  <h3 className="font-bold text-blue-100 text-lg flex items-center">
-                    <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
-                    </svg>
-                    Processing Status
-                  </h3>
-                  <div className="space-y-2 text-sm">
-                    <p className="text-blue-200">
-                      <span className="font-semibold">File:</span> {uploadStatus.filename}
-                    </p>
-                    <p className="text-blue-200">
-                      <span className="font-semibold">Conversation ID:</span> {uploadStatus.conversationId}
-                    </p>
-                    <p className="text-blue-200 flex items-center justify-between">
-                      <span>
-                        <span className="font-semibold">Status:</span>
-                        <span className={`ml-2 px-3 py-1 rounded-full text-xs font-bold ${
-                          uploadStatus.status === 'completed_and_stored'
-                            ? 'bg-green-500 text-white'
-                            : uploadStatus.status === 'processing_failed'
-                            ? 'bg-red-500 text-white'
-                            : 'bg-yellow-500 text-gray-900'
-                        }`}>
-                          {uploadStatus.status.replace(/_/g, ' ').toUpperCase()}
-                        </span>
-                      </span>
-                    </p>
-                    <p className="text-blue-200">
-                      <span className="font-semibold">Progress:</span> {uploadStatus.progress}
-                    </p>
-                    {uploadStatus.isPolling && (
-                      <div className="flex items-center text-blue-300 mt-3 pt-3 border-t border-blue-400/30">
-                        <div className="animate-spin h-4 w-4 border-2 border-blue-400 border-t-transparent rounded-full mr-2"></div>
-                        Checking status every 5 seconds...
-                      </div>
+              {/* File List */}
+              {fileStatuses.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-purple-100">
+                      Files ({fileStatuses.length})
+                    </h3>
+                    {(statusCounts.completed > 0 || statusCounts.error > 0) && (
+                      <button
+                        onClick={handleClearCompleted}
+                        className="text-xs text-purple-300 hover:text-purple-100 underline"
+                      >
+                        Clear completed/errors
+                      </button>
                     )}
                   </div>
+
+                  <div className="max-h-96 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                    {fileStatuses.map(fs => (
+                      <div
+                        key={fs.id}
+                        className="bg-white/5 border border-white/20 rounded-lg p-4 hover:bg-white/10 transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-purple-100 truncate">
+                              {fs.file.name}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
+                                fs.status === 'queued' ? 'bg-yellow-500/30 text-yellow-200' :
+                                fs.status === 'uploading' ? 'bg-blue-500/30 text-blue-200' :
+                                fs.status === 'processing' ? 'bg-blue-500/30 text-blue-200' :
+                                fs.status === 'completed' ? 'bg-green-500/30 text-green-200' :
+                                'bg-red-500/30 text-red-200'
+                              }`}>
+                                {fs.status === 'uploading' && '⏫ Uploading'}
+                                {fs.status === 'queued' && '⏳ Queued'}
+                                {fs.status === 'processing' && '⚙️ Processing'}
+                                {fs.status === 'completed' && '✓ Complete'}
+                                {fs.status === 'error' && '✗ Error'}
+                              </span>
+                              {fs.progress && (
+                                <span className="text-xs text-purple-300">{fs.progress}</span>
+                              )}
+                            </div>
+                            {fs.conversationId && (
+                              <p className="text-xs text-purple-400 mt-1">ID: {fs.conversationId}</p>
+                            )}
+                            {fs.error && (
+                              <p className="text-xs text-red-300 mt-1">{fs.error}</p>
+                            )}
+                          </div>
+
+                          <button
+                            onClick={() => handleRemoveFile(fs.id)}
+                            className="text-purple-300 hover:text-red-400 transition-colors flex-shrink-0"
+                            title="Remove"
+                          >
+                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"/>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {fileStatuses.length === 0 && (
+                <div className="text-center py-8 text-purple-300 text-sm">
+                  No files added yet. Drag & drop or click to browse.
                 </div>
               )}
             </div>
