@@ -498,14 +498,23 @@ async def get_batch_status(batch_id: str):
                 embedding_batch_results = openai_client.get_results(embedding_batch_id)
 
                 # Build embedding map
+                # New format: ONE batch result with ALL embeddings as array
                 embeddings_map = {}
                 for result in embedding_batch_results:
                     custom_id = result.get("custom_id", "")
-                    if custom_id.startswith("embed_"):
-                        chunk_id = custom_id.replace("embed_", "")
+                    if custom_id.startswith("embed_all_"):
+                        # Extract all embeddings from the data array
                         response_body = result.get("response", {}).get("body", {})
-                        embedding = response_body.get("data", [{}])[0].get("embedding", [])
-                        embeddings_map[chunk_id] = embedding
+                        embeddings_data = response_body.get("data", [])
+
+                        # Map embeddings by index to chunk IDs
+                        for idx, embed_obj in enumerate(embeddings_data):
+                            chunk_id = f"{stored_info['conversation_id']}_chunk_{idx}"
+                            embedding = embed_obj.get("embedding", [])
+                            embeddings_map[chunk_id] = embedding
+
+                        print(f"Extracted {len(embeddings_data)} embeddings from single batch request")
+                        break  # Only one result now
 
                 # Get stored extraction results (already computed synchronously)
                 extraction_results = stored_info.get("extraction_results", [])

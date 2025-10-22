@@ -95,41 +95,23 @@ Return only valid JSON matching this schema:
 Conversation chunk:
 """
 
-    for chunk in chunks:
-        chunk_id = f"{conversation_id}_chunk_{chunk['index']}"
+    # Create ONE embedding request with ALL chunks as an array (much more efficient!)
+    # The embeddings endpoint can handle up to 2048 inputs in a single request
+    chunk_texts = [chunk["text"] for chunk in chunks]
 
-        # 1. Embedding request
-        embedding_requests.append({
-            "custom_id": f"embed_{chunk_id}",
-            "method": "POST",
-            "url": "/v1/embeddings",
-            "body": {
-                "model": "text-embedding-3-small",
-                "input": chunk["text"],
-                "dimensions": 1024
-            }
-        })
+    embedding_requests.append({
+        "custom_id": f"embed_all_{conversation_id}",
+        "method": "POST",
+        "url": "/v1/embeddings",
+        "body": {
+            "model": "text-embedding-3-small",
+            "input": chunk_texts,  # Array of all chunk texts
+            "dimensions": 1024
+        }
+    })
 
-        # 2. Extraction request
-        extraction_requests.append({
-            "custom_id": f"extract_{chunk_id}",
-            "method": "POST",
-            "url": "/v1/chat/completions",
-            "body": {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a conversation analysis assistant. Extract structured data from conversations and return only valid JSON. Your response must be valid JSON only, no other text."
-                    },
-                    {
-                        "role": "user",
-                        "content": extraction_prompt + chunk["text"]
-                    }
-                ],
-                "temperature": 0.3
-            }
-        })
+    # Note: Extractions are now done synchronously during upload (not in batch)
+    # This loop is kept for backwards compatibility but extractions list will be empty
 
     return {
         "embeddings": embedding_requests,

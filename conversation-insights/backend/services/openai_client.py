@@ -283,7 +283,7 @@ Please provide a clear, well-structured answer."""
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.5,
-            max_tokens=1000
+            max_completion_tokens=1000
         )
 
         return response.choices[0].message.content
