@@ -564,13 +564,13 @@ function App() {
                                     </span>
                                   </div>
                                   <div className="flex items-center justify-between text-xs">
-                                    <span className="text-purple-300">{fs.batchDiagnostics.embedding_batch.progress}</span>
-                                    {fs.batchDiagnostics.embedding_batch.time_elapsed_min !== null && (
-                                      <span className="text-purple-400">{fs.batchDiagnostics.embedding_batch.time_elapsed_min} min</span>
+                                    <span className="text-purple-300">{String(fs.batchDiagnostics.embedding_batch.progress)}</span>
+                                    {fs.batchDiagnostics.embedding_batch.time_elapsed_min !== null && fs.batchDiagnostics.embedding_batch.time_elapsed_min !== undefined && (
+                                      <span className="text-purple-400">{String(fs.batchDiagnostics.embedding_batch.time_elapsed_min)} min</span>
                                     )}
                                   </div>
                                   {fs.batchDiagnostics.embedding_batch.failed > 0 && (
-                                    <div className="text-xs text-red-300 mt-1">⚠ {fs.batchDiagnostics.embedding_batch.failed} failed</div>
+                                    <div className="text-xs text-red-300 mt-1">⚠ {String(fs.batchDiagnostics.embedding_batch.failed)} failed</div>
                                   )}
                                 </div>
                               )}
@@ -590,13 +590,13 @@ function App() {
                                     </span>
                                   </div>
                                   <div className="flex items-center justify-between text-xs">
-                                    <span className="text-purple-300">{fs.batchDiagnostics.extraction_batch.progress}</span>
-                                    {fs.batchDiagnostics.extraction_batch.time_elapsed_min !== null && (
-                                      <span className="text-purple-400">{fs.batchDiagnostics.extraction_batch.time_elapsed_min} min</span>
+                                    <span className="text-purple-300">{String(fs.batchDiagnostics.extraction_batch.progress)}</span>
+                                    {fs.batchDiagnostics.extraction_batch.time_elapsed_min !== null && fs.batchDiagnostics.extraction_batch.time_elapsed_min !== undefined && (
+                                      <span className="text-purple-400">{String(fs.batchDiagnostics.extraction_batch.time_elapsed_min)} min</span>
                                     )}
                                   </div>
                                   {fs.batchDiagnostics.extraction_batch.failed > 0 && (
-                                    <div className="text-xs text-red-300 mt-1">⚠ {fs.batchDiagnostics.extraction_batch.failed} failed</div>
+                                    <div className="text-xs text-red-300 mt-1">⚠ {String(fs.batchDiagnostics.extraction_batch.failed)} failed</div>
                                   )}
                                 </div>
                               )}
