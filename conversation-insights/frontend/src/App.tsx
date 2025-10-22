@@ -114,7 +114,7 @@ function App() {
       setFileStatuses(prev => prev.map(fs =>
         fs.id === fileId ? {
           ...fs,
-          status: status.status === 'completed_and_stored' ? 'completed' :
+          status: status.status === 'completed_and_stored' || status.status === 'completed' ? 'completed' :
                   status.status === 'failed' || status.status === 'processing_failed' ? 'error' :
                   'processing',
           progress: status.progress,
@@ -127,6 +127,7 @@ function App() {
 
       // Stop polling if completed or failed
       if (status.status === 'completed_and_stored' ||
+          status.status === 'completed' ||
           status.status === 'processing_failed' ||
           status.status === 'failed') {
         const intervalId = pollingIntervalsRef.current.get(fileId);
