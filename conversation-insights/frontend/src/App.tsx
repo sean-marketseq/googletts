@@ -19,7 +19,7 @@ interface BatchDiagnostics {
   };
   hume_job?: {
     id: string;
-    status: string;
+    status: string | { state?: string; status?: string; error?: string };
     message?: string;
   };
 }
