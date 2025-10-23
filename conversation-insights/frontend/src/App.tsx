@@ -644,7 +644,11 @@ function App() {
                                       <div className="space-y-1 text-[10px]">
                                         <div className="flex justify-between">
                                           <span className="text-purple-200/70">Status:</span>
-                                          <span className="text-purple-200 font-mono">{String(fs.batchDiagnostics.hume_job.status)}</span>
+                                          <span className="text-purple-200 font-mono">
+                                            {typeof fs.batchDiagnostics.hume_job.status === 'string'
+                                              ? fs.batchDiagnostics.hume_job.status
+                                              : (fs.batchDiagnostics.hume_job.status?.state || fs.batchDiagnostics.hume_job.status?.status || 'Processing')}
+                                          </span>
                                         </div>
                                         {fs.batchDiagnostics.hume_job.message && (
                                           <div className="text-purple-200/70 italic">{String(fs.batchDiagnostics.hume_job.message)}</div>
