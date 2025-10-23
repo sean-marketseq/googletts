@@ -255,6 +255,22 @@ async def upload_audio(
 
         print(f"Speaker labeling: {speaker_labels} (confidence: {labeling_confidence})")
 
+        # === STEP 1.5: Extract sentiment timeline from speaker turns ===
+        try:
+            print(f"Extracting sentiment timeline from {len(diarization['segments'])} segments...")
+            # Group segments into speaker turns
+            turns = openai_client.group_segments_into_turns(diarization["segments"])
+            print(f"Grouped into {len(turns)} speaker turns")
+
+            # Extract sentiment per turn
+            sentiment_timeline = openai_client.extract_turn_sentiments(turns)
+            print(f"Sentiment extraction complete: {len(sentiment_timeline)} timeline entries")
+        except Exception as e:
+            print(f"Warning: Sentiment timeline extraction failed: {e}")
+            traceback.print_exc()
+            # Continue without sentiment timeline if it fails
+            sentiment_timeline = []
+
         # === STEP 2: Submit to Hume (with error handling) ===
         hume_job_id = None
         try:
@@ -282,33 +298,19 @@ async def upload_audio(
                 detail=f"Transcript chunking failed: {str(e)}"
             )
 
-        # === STEP 4: Extract data from chunks synchronously (FAST - direct API calls) ===
-        try:
-            print(f"Extracting data from {len(chunks)} chunks...")
-            extraction_results = []
-            for i, chunk in enumerate(chunks):
-                try:
-                    extracted = openai_client.extract_conversation_data(chunk["text"])
-                    extraction_results.append({
-                        "chunk_id": f"{conversation_id}_chunk_{chunk['index']}",
-                        "data": extracted
-                    })
-                except Exception as chunk_error:
-                    print(f"Error extracting chunk {i}: {chunk_error}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Data extraction failed at chunk {i+1}/{len(chunks)}: {str(chunk_error)}"
-                    )
-            print(f"Extraction complete for {len(chunks)} chunks")
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"Error during data extraction: {e}")
-            traceback.print_exc()
-            raise HTTPException(
-                status_code=500,
-                detail=f"Data extraction failed: {str(e)}"
-            )
+        # === STEP 4: Map sentiment timeline to chunks ===
+        # For each chunk, calculate average sentiment from overlapping turns
+        def calculate_chunk_sentiment(chunk_text: str, sentiment_timeline: List[Dict]) -> float:
+            """Calculate sentiment for a chunk based on overlapping timeline entries"""
+            if not sentiment_timeline:
+                return 0.0
+
+            # Simple approach: average all sentiments
+            # (More sophisticated: weight by text overlap, but this is simpler)
+            total_sentiment = sum(entry["sentiment"] for entry in sentiment_timeline)
+            return total_sentiment / len(sentiment_timeline) if sentiment_timeline else 0.0
+
+        print(f"Mapping sentiment timeline to {len(chunks)} chunks...")
 
         # === STEP 5: Create embeddings directly (no batch, much faster!) ===
         try:
@@ -333,14 +335,8 @@ async def upload_audio(
             for i, chunk in enumerate(chunks):
                 chunk_id = f"{conversation_id}_chunk_{chunk['index']}"
 
-                # Get extraction data for this chunk
-                extracted = extraction_results[i]["data"] if i < len(extraction_results) else {
-                    "intents": [],
-                    "entities": [],
-                    "sentiment": 0.0,
-                    "action_items": [],
-                    "compliance_flags": []
-                }
+                # Calculate sentiment for this chunk from timeline
+                chunk_sentiment = calculate_chunk_sentiment(chunk["text"], sentiment_timeline)
 
                 record = {
                     "id": chunk_id,
@@ -352,12 +348,9 @@ async def upload_audio(
                         "token_count": chunk["token_count"],
                         # Merge conversation metadata
                         **metadata_dict,
-                        # Add extracted data
-                        "intents": extracted.get("intents", []),
-                        "entities": json.dumps(extracted.get("entities", [])),
-                        "sentiment": extracted.get("sentiment", 0.0),
-                        "action_items": extracted.get("action_items", []),
-                        "compliance_flags": extracted.get("compliance_flags", []),
+                        # Add timeline-based sentiment
+                        "sentiment": chunk_sentiment,
+                        "has_sentiment_timeline": len(sentiment_timeline) > 0,
                         # Add speaker info
                         "labeling_confidence": labeling_confidence
                     }
@@ -397,6 +390,7 @@ async def upload_audio(
             "diarization": diarization,
             "speaker_labels": speaker_labels,
             "labeling_confidence": labeling_confidence,
+            "sentiment_timeline": sentiment_timeline,
             "conversation_stored": True  # Conversation is already in Pinecone
         }
 

@@ -567,6 +567,112 @@ Please provide a clear, well-structured answer that leverages both the conversat
 
         return labeled_segments
 
+    def group_segments_into_turns(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Group consecutive segments from the same speaker into turns
+
+        Args:
+            segments: List of segments with start, end, speaker, text
+
+        Returns:
+            List of turns: [{"start": float, "end": float, "speaker": str, "text": str}, ...]
+        """
+        if not segments:
+            return []
+
+        turns = []
+        current_turn = {
+            "start": segments[0]["start"],
+            "end": segments[0]["end"],
+            "speaker": segments[0]["speaker"],
+            "text": segments[0]["text"]
+        }
+
+        for seg in segments[1:]:
+            # If same speaker, extend current turn
+            if seg["speaker"] == current_turn["speaker"]:
+                current_turn["end"] = seg["end"]
+                current_turn["text"] += " " + seg["text"]
+            else:
+                # Different speaker - save current turn and start new one
+                turns.append(current_turn)
+                current_turn = {
+                    "start": seg["start"],
+                    "end": seg["end"],
+                    "speaker": seg["speaker"],
+                    "text": seg["text"]
+                }
+
+        # Don't forget the last turn
+        turns.append(current_turn)
+
+        return turns
+
+    def extract_turn_sentiments(self, turns: List[Dict[str, Any]], model: str = "gpt-4o-mini") -> List[Dict[str, Any]]:
+        """
+        Extract sentiment for each speaker turn
+
+        Args:
+            turns: List of speaker turns with start, end, speaker, text
+            model: Model to use for extraction
+
+        Returns:
+            List of sentiment entries: [{"start": float, "end": float, "speaker": str, "sentiment": float}, ...]
+        """
+        sentiment_timeline = []
+
+        for turn in turns:
+            # Skip very short turns (< 10 chars)
+            if len(turn["text"].strip()) < 10:
+                sentiment_timeline.append({
+                    "start": turn["start"],
+                    "end": turn["end"],
+                    "speaker": turn["speaker"],
+                    "sentiment": 0.0
+                })
+                continue
+
+            try:
+                # Use simplified prompt for faster processing
+                response = self.client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a sentiment analysis assistant. Analyze the emotional tone and return only a number from -1 (very negative/frustrated) to 1 (very positive/satisfied). Return only the number, no other text."
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Analyze sentiment of this speaker's statement:\n\n{turn['text']}\n\nSentiment score:"
+                        }
+                    ],
+                    temperature=0.3,
+                    max_tokens=10
+                )
+
+                # Parse sentiment score
+                content = response.choices[0].message.content.strip()
+                try:
+                    sentiment = float(content)
+                    # Clamp to [-1, 1]
+                    sentiment = max(-1.0, min(1.0, sentiment))
+                except ValueError:
+                    print(f"Warning: Could not parse sentiment '{content}', defaulting to 0.0")
+                    sentiment = 0.0
+
+            except Exception as e:
+                print(f"Error extracting sentiment for turn: {e}")
+                sentiment = 0.0
+
+            sentiment_timeline.append({
+                "start": turn["start"],
+                "end": turn["end"],
+                "speaker": turn["speaker"],
+                "sentiment": sentiment
+            })
+
+        return sentiment_timeline
+
     def label_speakers_as_agent_caller(
         self,
         segments: List[Dict[str, Any]]
