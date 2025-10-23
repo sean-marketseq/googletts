@@ -282,8 +282,9 @@ Please provide a clear, well-structured answer."""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            # GPT-5 only supports default temperature=1, custom values not allowed
-            max_completion_tokens=1000
+            # GPT-5 uses reasoning tokens (like o1) - need much higher limit
+            # to allow for both reasoning AND the actual answer text
+            max_completion_tokens=8000
         )
 
         # Debug: Print full response structure
