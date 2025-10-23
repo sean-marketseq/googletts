@@ -286,12 +286,23 @@ Please provide a clear, well-structured answer."""
             max_completion_tokens=1000
         )
 
+        # Debug: Print full response structure
+        print(f"[GPT-5 DEBUG] Response type: {type(response)}")
+        print(f"[GPT-5 DEBUG] Response model: {response.model if hasattr(response, 'model') else 'N/A'}")
+        print(f"[GPT-5 DEBUG] Choices count: {len(response.choices) if hasattr(response, 'choices') else 0}")
+
+        if response.choices:
+            choice = response.choices[0]
+            print(f"[GPT-5 DEBUG] Finish reason: {choice.finish_reason}")
+            print(f"[GPT-5 DEBUG] Message type: {type(choice.message)}")
+            print(f"[GPT-5 DEBUG] Message content: {choice.message.content}")
+            print(f"[GPT-5 DEBUG] Message content type: {type(choice.message.content)}")
+
         answer = response.choices[0].message.content
 
         # Debug: Check if answer is None or empty
         if not answer:
-            print(f"WARNING: GPT-5 returned empty/None answer. Response: {response}")
-            print(f"  Finish reason: {response.choices[0].finish_reason if response.choices else 'N/A'}")
+            print(f"WARNING: GPT-5 returned empty/None answer")
             return "Unable to generate answer - model returned empty response."
 
         return answer
