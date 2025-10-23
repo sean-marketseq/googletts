@@ -202,16 +202,34 @@ async def upload_audio(
                 detail=f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
             )
 
-        # Generate conversation ID if not provided
-        if not conversation_id:
-            import uuid
-            conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
-
-        # Parse metadata
+        # Parse metadata first
         try:
             metadata_dict = json.loads(metadata)
         except:
             metadata_dict = {}
+
+        # Generate conversation ID if not provided
+        # Try to extract from filename pattern: conv_<id>_<date>.ext
+        if not conversation_id:
+            import uuid
+            import re
+
+            # Try to parse filename: conv_0001k83j5q64f6ytzj2vkw9vrve0_2025-10-21.mp3
+            filename_without_ext = os.path.splitext(file.filename)[0]
+            match = re.match(r'^(conv_[a-z0-9]+)_(\d{4}-\d{2}-\d{2})$', filename_without_ext)
+
+            if match:
+                conversation_id = match.group(1)
+                extracted_date = match.group(2)
+                print(f"Extracted conversation_id: {conversation_id}, date: {extracted_date} from filename")
+
+                # Add extracted date to metadata if not already present
+                if 'date' not in metadata_dict:
+                    metadata_dict['date'] = extracted_date
+            else:
+                # Fallback to generated ID
+                conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
+                print(f"Filename pattern not recognized, generated conversation_id: {conversation_id}")
 
         print(f"Processing audio file: {file.filename} for conversation: {conversation_id}")
 
