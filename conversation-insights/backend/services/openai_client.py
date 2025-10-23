@@ -268,6 +268,75 @@ Conversation chunk:
                 "compliance_flags": []
             }
 
+    def extract_emotion_intent(self, query: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
+        """
+        Extract emotion-related keywords from a query to enable emotion-based search
+
+        Args:
+            query: User's natural language query
+            model: Model to use for extraction
+
+        Returns:
+            Dictionary with emotion keywords and their weights
+        """
+        extraction_prompt = """Analyze this query and extract emotion-related intent.
+
+Available emotions (Hume AI emotion categories):
+Admiration, Adoration, Aesthetic Appreciation, Amusement, Anger, Anxiety, Awe, Awkwardness,
+Boredom, Calmness, Concentration, Confusion, Contemplation, Contempt, Contentment, Craving,
+Desire, Determination, Disappointment, Disgust, Distress, Doubt, Ecstasy, Embarrassment,
+Empathic Pain, Entrancement, Envy, Excitement, Fear, Guilt, Horror, Interest, Joy, Love,
+Nostalgia, Pain, Pride, Realization, Relief, Romance, Sadness, Satisfaction, Shame,
+Surprise (negative), Surprise (positive), Sympathy, Tiredness, Triumph
+
+Return ONLY valid JSON with this schema:
+{
+  "has_emotion_intent": true/false,
+  "primary_emotions": ["Emotion1", "Emotion2"],  // Most relevant emotions from list above
+  "emotion_weight": 0.0-1.0,  // How important emotions are to this query (0=not important, 1=very important)
+  "description": "brief description of emotional intent"
+}
+
+Query: """
+
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an emotion analysis assistant. Extract emotion-related intent from queries. Return only valid JSON."
+                    },
+                    {
+                        "role": "user",
+                        "content": extraction_prompt + query
+                    }
+                ],
+                temperature=0.3
+            )
+
+            content = response.choices[0].message.content
+            emotion_intent = json.loads(content)
+
+            return emotion_intent
+
+        except json.JSONDecodeError as e:
+            print(f"Error parsing emotion intent JSON: {e}")
+            return {
+                "has_emotion_intent": False,
+                "primary_emotions": [],
+                "emotion_weight": 0.0,
+                "description": "Could not parse emotion intent"
+            }
+        except Exception as e:
+            print(f"Error extracting emotion intent: {e}")
+            return {
+                "has_emotion_intent": False,
+                "primary_emotions": [],
+                "emotion_weight": 0.0,
+                "description": f"Error: {str(e)}"
+            }
+
     def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5-2025-08-07") -> str:
         """
         Use GPT to synthesize an answer from retrieved chunks

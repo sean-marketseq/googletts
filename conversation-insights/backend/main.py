@@ -944,13 +944,16 @@ async def debug_batch(batch_id: str):
 @app.post("/query", response_model=QueryResponse)
 async def query_conversations(request: QueryRequest):
     """
-    Query conversations with natural language
+    Query conversations with natural language using BOTH text and emotion indices
 
     Steps:
-    1. Create embedding for the query
-    2. Search Pinecone for relevant chunks
-    3. Send top results to GPT for synthesis
-    4. Return answer with sources
+    1. Extract emotion intent from query
+    2. Create text embedding for query
+    3. Search conversations index (text-based)
+    4. If emotion intent detected, search emotions index (emotion-based)
+    5. Merge and rank results
+    6. Send enriched context to GPT for synthesis
+    7. Return answer with sources
     """
     try:
         import time
@@ -958,11 +961,15 @@ async def query_conversations(request: QueryRequest):
 
         print(f"Processing query: {request.query}")
 
-        # Step 1: Create query embedding
+        # Step 1: Extract emotion intent
+        emotion_intent = openai_client.extract_emotion_intent(request.query)
+        print(f"Emotion intent: {emotion_intent}")
+
+        # Step 2: Create query embedding for text search
         query_embedding = openai_client.create_embedding(request.query)
 
-        # Step 2: Search Pinecone
-        matches = pinecone_client.query(
+        # Step 3: Search conversations index (text-based)
+        text_matches = pinecone_client.query(
             embedding=query_embedding,
             top_k=request.top_k,
             filter=request.filters,
@@ -970,7 +977,94 @@ async def query_conversations(request: QueryRequest):
             include_metadata=True
         )
 
-        print(f"Found {len(matches)} matches")
+        print(f"Found {len(text_matches)} text-based matches")
+
+        # Step 4: Search emotions index if emotion intent detected
+        emotion_matches = []
+        if emotion_intent.get("has_emotion_intent") and emotion_intent.get("emotion_weight", 0) > 0.3:
+            print(f"Searching emotions index for: {emotion_intent['primary_emotions']}")
+
+            # Create synthetic emotion vector
+            emotion_vector = hume_client.create_emotion_query_vector(
+                primary_emotions=emotion_intent["primary_emotions"],
+                emotion_weight=emotion_intent.get("emotion_weight", 0.8)
+            )
+
+            # Query emotions index
+            if not pinecone_client.emotion_index:
+                pinecone_client.setup_emotion_index(dimension=192)
+
+            emotion_results = pinecone_client.emotion_index.query(
+                vector=emotion_vector,
+                top_k=20,  # Get top 20 emotionally similar conversations
+                filter=request.filters,
+                namespace="emotions",
+                include_metadata=True
+            )
+
+            # Convert to same format as text_matches
+            for match in emotion_results.matches:
+                emotion_matches.append({
+                    "id": match.id,
+                    "score": match.score,
+                    "metadata": match.metadata,
+                    "match_type": "emotion"
+                })
+
+            print(f"Found {len(emotion_matches)} emotion-based matches")
+
+        # Step 5: Merge results by conversation_id
+        # Combine scores for conversations that match both text and emotion
+        conversation_scores = {}
+        all_metadata = {}
+
+        # Add text matches
+        for match in text_matches:
+            conv_id = match["metadata"].get("conversation_id")
+            conversation_scores[conv_id] = conversation_scores.get(conv_id, 0) + match["score"]
+            if conv_id not in all_metadata:
+                all_metadata[conv_id] = []
+            all_metadata[conv_id].append(match["metadata"])
+
+        # Add emotion matches (boost score if query has emotion intent)
+        emotion_boost = emotion_intent.get("emotion_weight", 0.5) if emotion_intent.get("has_emotion_intent") else 0
+        for match in emotion_matches:
+            conv_id = match["id"]
+            # Boost emotion scores based on emotion_weight
+            boosted_score = match["score"] * (1.0 + emotion_boost)
+            conversation_scores[conv_id] = conversation_scores.get(conv_id, 0) + boosted_score
+
+            # Add emotion metadata to the conversation
+            if conv_id in all_metadata:
+                # Enrich existing metadata with emotion info
+                for meta in all_metadata[conv_id]:
+                    meta["emotion_match"] = True
+                    meta["emotion_score"] = match["score"]
+                    if match["metadata"]:
+                        meta["speaker_a_top_emotions"] = match["metadata"].get("speaker_a_top_5", [])
+                        meta["speaker_b_top_emotions"] = match["metadata"].get("speaker_b_top_5", [])
+
+        # Sort by combined score
+        ranked_conversations = sorted(
+            conversation_scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        print(f"Merged into {len(ranked_conversations)} unique conversations")
+
+        # Get matches for top conversations
+        matches = []
+        for conv_id, score in ranked_conversations[:request.top_k]:
+            if conv_id in all_metadata:
+                for meta in all_metadata[conv_id]:
+                    matches.append({
+                        "id": meta.get("chunk_id", conv_id),
+                        "score": score,
+                        "metadata": meta
+                    })
+
+        print(f"Returning {len(matches)} total chunks from top conversations")
 
         if not matches:
             return QueryResponse(
@@ -989,20 +1083,34 @@ async def query_conversations(request: QueryRequest):
             context_chunks=context_chunks
         )
 
-        # Format sources
+        # Format sources with emotion data
         sources = []
         for match in top_matches[:10]:  # Return top 10 sources
             metadata = match["metadata"]
-            sources.append({
+            source = {
                 "conversation_id": metadata.get("conversation_id"),
                 "date": metadata.get("date"),
                 "score": match["score"],
                 "text": metadata.get("text", "")[:200] + "...",  # Truncate for display
                 "sentiment": metadata.get("sentiment"),
                 "intents": metadata.get("intents", [])
-            })
+            }
+
+            # Add emotion data if available
+            if metadata.get("emotion_match"):
+                source["emotion_match"] = True
+                source["emotion_score"] = metadata.get("emotion_score")
+                source["speaker_a_top_emotions"] = metadata.get("speaker_a_top_emotions", [])[:3]
+                source["speaker_b_top_emotions"] = metadata.get("speaker_b_top_emotions", [])[:3]
+
+            sources.append(source)
 
         processing_time = (time.time() - start_time) * 1000
+
+        # Log emotion query details
+        print(f"Query complete - Emotion intent: {emotion_intent.get('has_emotion_intent')}, "
+              f"Emotions: {emotion_intent.get('primary_emotions')}, "
+              f"Text matches: {len(text_matches)}, Emotion matches: {len(emotion_matches)}")
 
         return QueryResponse(
             answer=answer,

@@ -357,6 +357,51 @@ class HumeClient:
             "peak_emotion": peak
         }
 
+    def create_emotion_query_vector(self, primary_emotions: List[str], emotion_weight: float = 0.8) -> List[float]:
+        """
+        Create a synthetic 192-d emotion vector for querying based on desired emotions
+
+        Args:
+            primary_emotions: List of emotion names to emphasize (e.g., ["Anger", "Frustration"])
+            emotion_weight: Score to assign to primary emotions (0.0-1.0)
+
+        Returns:
+            192-d vector (96-d per speaker) suitable for querying emotion index
+        """
+        # Hume AI's 48 emotion categories in alphabetical order
+        hume_emotions = [
+            "Admiration", "Adoration", "Aesthetic Appreciation", "Amusement", "Anger", "Anxiety",
+            "Awe", "Awkwardness", "Boredom", "Calmness", "Concentration", "Confusion",
+            "Contemplation", "Contempt", "Contentment", "Craving", "Desire", "Determination",
+            "Disappointment", "Disgust", "Distress", "Doubt", "Ecstasy", "Embarrassment",
+            "Empathic Pain", "Entrancement", "Envy", "Excitement", "Fear", "Guilt",
+            "Horror", "Interest", "Joy", "Love", "Nostalgia", "Pain", "Pride",
+            "Realization", "Relief", "Romance", "Sadness", "Satisfaction", "Shame",
+            "Surprise (negative)", "Surprise (positive)", "Sympathy", "Tiredness", "Triumph"
+        ]
+
+        # Create base vector (all zeros)
+        means = [0.0] * 48
+        maxes = [0.0] * 48
+
+        # Set high scores for primary emotions
+        for emotion in primary_emotions:
+            if emotion in hume_emotions:
+                idx = hume_emotions.index(emotion)
+                means[idx] = emotion_weight
+                maxes[idx] = emotion_weight
+            else:
+                print(f"Warning: Emotion '{emotion}' not in Hume emotion list")
+
+        # Create 96-d vector for one speaker (means + maxes)
+        speaker_vector = means + maxes
+
+        # Create 192-d vector (duplicate for both speakers)
+        # This queries for calls where EITHER speaker shows these emotions
+        combined_vector = speaker_vector + speaker_vector
+
+        return combined_vector
+
     def compute_combined_features(
         self,
         speaker_a_features: Dict[str, Any],
