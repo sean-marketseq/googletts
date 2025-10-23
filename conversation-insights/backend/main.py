@@ -438,15 +438,20 @@ async def hume_callback(request: Request):
         print(f"Hume webhook received - Job ID: {job_id}, Status: {status}")
 
         if status == "COMPLETED":
-            # Find conversation by hume job_id
+            # Find conversation by hume job_id (check both old and new formats)
             batch_info = None
             for bid, info in batch_storage.items():
+                # New format: hume_job_id field
+                if info.get("hume_job_id") == job_id:
+                    batch_info = info
+                    break
+                # Old format: paired_batch_ids.hume
                 if info.get("paired_batch_ids", {}).get("hume") == job_id:
                     batch_info = info
                     break
 
             if not batch_info:
-                print(f"No batch found for Hume job: {job_id}")
+                print(f"No upload found for Hume job: {job_id}")
                 return {"status": "ignored"}
 
             print(f"Processing Hume results for job: {job_id}")
@@ -502,6 +507,41 @@ async def hume_callback(request: Request):
             }
 
             print(f"Emotion data stored for conversation: {batch_info['conversation_id']}")
+
+            # Immediately upsert emotion record to Pinecone
+            try:
+                speaker_a_peak = speaker_a_features.get("peak_emotion")
+                speaker_b_peak = speaker_b_features.get("peak_emotion")
+
+                emotion_record = {
+                    "id": batch_info["conversation_id"],
+                    "values": combined["combined_vector"],
+                    "metadata": {
+                        "conversation_id": batch_info["conversation_id"],
+                        "speaker_a_top_5": speaker_a_features.get("top_5_emotions", []),
+                        "speaker_b_top_5": speaker_b_features.get("top_5_emotions", []),
+                        "speaker_a_peak": speaker_a_peak["emotion"] if speaker_a_peak else "",
+                        "speaker_b_peak": speaker_b_peak["emotion"] if speaker_b_peak else "",
+                        "speaker_labels": json.dumps(batch_info.get("speaker_labels", {})),
+                        "labeling_confidence": batch_info.get("labeling_confidence", False),
+                        **batch_info.get("metadata", {})
+                    }
+                }
+
+                # Only upsert if vector has non-zero values
+                emotion_vector = emotion_record["values"]
+                has_nonzero = any(v != 0.0 for v in emotion_vector)
+                if has_nonzero:
+                    pinecone_client.upsert_emotions(
+                        records=[emotion_record],
+                        namespace="emotions"
+                    )
+                    print(f"Upserted emotion record for conversation: {batch_info['conversation_id']}")
+                else:
+                    print(f"WARNING: Skipping emotion upsert - vector is all zeros for {batch_info['conversation_id']}")
+            except Exception as e:
+                print(f"Error upserting emotion data: {e}")
+                traceback.print_exc()
 
         return {"status": "received"}
 
@@ -578,24 +618,9 @@ async def _handle_direct_upload_status(upload_id: str, stored_info: Dict[str, An
     if hume_job_id and not hume_done:
         overall_status = "processing_emotions"
         progress = "Conversation indexed, waiting for emotion analysis"
-    elif hume_job_id and hume_done and not stored_info.get("emotions_updated"):
-        # Hume done but emotions not added to Pinecone yet
-        overall_status = "updating_emotions"
-        progress = "Adding emotion data to index"
-
-        # Update Pinecone records with emotion data in background
-        try:
-            await _update_emotions_in_pinecone(stored_info)
-            stored_info["emotions_updated"] = True
-            overall_status = "completed"
-            progress = "Complete with emotions"
-        except Exception as e:
-            print(f"Error updating emotions: {e}")
-            overall_status = "completed"
-            progress = "Complete (emotion update failed)"
     else:
         overall_status = "completed"
-        progress = "Complete"
+        progress = "Complete with emotions" if hume_done else "Complete"
 
     # Build diagnostics
     diagnostics = {
@@ -634,47 +659,6 @@ async def _handle_direct_upload_status(upload_id: str, stored_info: Dict[str, An
         conversation_id=conversation_id,
         details=details
     )
-
-
-async def _update_emotions_in_pinecone(stored_info: Dict[str, Any]):
-    """Update Pinecone records with emotion data when Hume completes"""
-    emotion_data = stored_info.get("emotion_data", {})
-    if not emotion_data:
-        return
-
-    conversation_id = stored_info["conversation_id"]
-
-    # Fetch existing conversation records and update them
-    # (For simplicity, we'll just upsert the emotion record to emotions index)
-    speaker_a_peak = emotion_data.get("speaker_a", {}).get("peak_emotion")
-    speaker_b_peak = emotion_data.get("speaker_b", {}).get("peak_emotion")
-
-    emotion_record = {
-        "id": conversation_id,
-        "values": emotion_data.get("combined_vector", [0.0] * 192),
-        "metadata": {
-            "conversation_id": conversation_id,
-            "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
-            "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
-            "speaker_a_peak": speaker_a_peak["emotion"] if speaker_a_peak else "",
-            "speaker_b_peak": speaker_b_peak["emotion"] if speaker_b_peak else "",
-            "speaker_labels": json.dumps(stored_info.get("speaker_labels", {})),
-            "labeling_confidence": stored_info.get("labeling_confidence", False),
-            **stored_info.get("metadata", {})
-        }
-    }
-
-    # Only upsert if vector has non-zero values
-    emotion_vector = emotion_record["values"]
-    has_nonzero = any(v != 0.0 for v in emotion_vector)
-    if has_nonzero:
-        pinecone_client.upsert_emotions(
-            records=[emotion_record],
-            namespace="emotions"
-        )
-        print(f"Updated emotion data for conversation: {conversation_id}")
-    else:
-        print(f"WARNING: Skipping emotion record - vector is all zeros for {conversation_id}")
 
 
 async def _handle_batch_upload_status(batch_id: str, stored_info: Dict[str, Any]) -> StatusResponse:
