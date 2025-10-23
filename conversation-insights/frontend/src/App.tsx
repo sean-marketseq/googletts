@@ -771,6 +771,43 @@ function App() {
                 <label className="block text-sm font-semibold text-purple-200 mb-3">
                   Your Question
                 </label>
+
+                {/* Quick Queries */}
+                <div className="mb-4 p-4 bg-white/5 border border-purple-400/30 rounded-xl">
+                  <p className="text-xs font-semibold text-purple-300 mb-2 uppercase tracking-wide">
+                    Quick Queries
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQuery("Analyze calls that resulted in transfers to human agents. For questions the digital agent couldn't answer:\n1. List the specific questions/issues\n2. Group by theme (e.g., technical issues, policy questions, complex scenarios)\n3. For each theme, provide:\n   - Customer emotions (from Hume AI data)\n   - Text sentiment scores\n   - Frequency/occurrence count\n   - Priority level (high/medium/low)\n4. Recommend specific improvements to our digital agent's system prompt to handle these scenarios")}
+                      className="px-3 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs rounded-lg
+                        hover:from-purple-600 hover:to-pink-600 transition-all duration-200
+                        transform hover:scale-105 font-medium shadow-md"
+                    >
+                      Transfer Analysis
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQuery("What are the most frustrated customers and why?")}
+                      className="px-3 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-xs rounded-lg
+                        hover:from-blue-600 hover:to-cyan-600 transition-all duration-200
+                        transform hover:scale-105 font-medium shadow-md"
+                    >
+                      Top Frustrations
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQuery("Identify positive customer interactions with high satisfaction")}
+                      className="px-3 py-2 bg-gradient-to-r from-green-500 to-teal-500 text-white text-xs rounded-lg
+                        hover:from-green-600 hover:to-teal-600 transition-all duration-200
+                        transform hover:scale-105 font-medium shadow-md"
+                    >
+                      Positive Calls
+                    </button>
+                  </div>
+                </div>
+
                 <textarea
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
@@ -779,7 +816,7 @@ function App() {
                     text-white placeholder-purple-300
                     focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent
                     resize-none"
-                  rows={3}
+                  rows={4}
                 />
               </div>
 
