@@ -237,13 +237,21 @@ async def upload_audio(
         audio_content = await file.read()
 
         # === STEP 1: Transcribe with diarization ===
-        diarization = openai_client.transcribe_audio_with_diarization(
-            io.BytesIO(audio_content),
-            file.filename
-        )
-        speaker_labels, labeling_confidence = openai_client.label_speakers_as_agent_caller(
-            diarization["segments"]
-        )
+        try:
+            diarization = openai_client.transcribe_audio_with_diarization(
+                io.BytesIO(audio_content),
+                file.filename
+            )
+            speaker_labels, labeling_confidence = openai_client.label_speakers_as_agent_caller(
+                diarization["segments"]
+            )
+        except Exception as e:
+            print(f"Error during transcription: {e}")
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Audio transcription failed: {str(e)}"
+            )
 
         print(f"Speaker labeling: {speaker_labels} (confidence: {labeling_confidence})")
 
@@ -262,37 +270,78 @@ async def upload_audio(
             print("Continuing with OpenAI processing only...")
 
         # === STEP 3: Chunk transcript ===
-        transcript = diarization["full_transcript"]
-        chunks = chunk_text(transcript, max_tokens=1500, overlap=200)
-        print(f"Created {len(chunks)} chunks")
+        try:
+            transcript = diarization["full_transcript"]
+            chunks = chunk_text(transcript, max_tokens=1500, overlap=200)
+            print(f"Created {len(chunks)} chunks")
+        except Exception as e:
+            print(f"Error during transcript chunking: {e}")
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Transcript chunking failed: {str(e)}"
+            )
 
         # === STEP 4: Extract data from chunks synchronously (FAST - direct API calls) ===
-        print(f"Extracting data from {len(chunks)} chunks...")
-        extraction_results = []
-        for chunk in chunks:
-            extracted = openai_client.extract_conversation_data(chunk["text"])
-            extraction_results.append({
-                "chunk_id": f"{conversation_id}_chunk_{chunk['index']}",
-                "data": extracted
-            })
-        print(f"Extraction complete for {len(chunks)} chunks")
+        try:
+            print(f"Extracting data from {len(chunks)} chunks...")
+            extraction_results = []
+            for i, chunk in enumerate(chunks):
+                try:
+                    extracted = openai_client.extract_conversation_data(chunk["text"])
+                    extraction_results.append({
+                        "chunk_id": f"{conversation_id}_chunk_{chunk['index']}",
+                        "data": extracted
+                    })
+                except Exception as chunk_error:
+                    print(f"Error extracting chunk {i}: {chunk_error}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Data extraction failed at chunk {i+1}/{len(chunks)}: {str(chunk_error)}"
+                    )
+            print(f"Extraction complete for {len(chunks)} chunks")
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Error during data extraction: {e}")
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Data extraction failed: {str(e)}"
+            )
 
         # === STEP 5: Create embedding batch requests (only embeddings now) ===
-        batch_requests = create_batch_requests(
-            conversation_id=conversation_id,
-            chunks=chunks,
-            metadata=metadata_dict
-        )
-        embedding_count = len(batch_requests["embeddings"])
-        print(f"Created {embedding_count} embedding requests")
+        try:
+            batch_requests = create_batch_requests(
+                conversation_id=conversation_id,
+                chunks=chunks,
+                metadata=metadata_dict
+            )
+            embedding_count = len(batch_requests["embeddings"])
+            print(f"Created {embedding_count} embedding requests")
+        except Exception as e:
+            print(f"Error creating batch requests: {e}")
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create batch requests: {str(e)}"
+            )
 
         # === STEP 6: Submit embedding batch ===
-        print(f"[BATCH] Submitting embedding batch with {embedding_count} requests...")
-        embedding_batch_id = openai_client.submit_batch(
-            batch_requests["embeddings"],
-            endpoint="/v1/embeddings"
-        )
-        print(f"[BATCH] Embedding batch submitted: {embedding_batch_id}")
+        try:
+            print(f"[BATCH] Submitting embedding batch with {embedding_count} requests...")
+            embedding_batch_id = openai_client.submit_batch(
+                batch_requests["embeddings"],
+                endpoint="/v1/embeddings"
+            )
+            print(f"[BATCH] Embedding batch submitted: {embedding_batch_id}")
+        except Exception as e:
+            print(f"Error submitting embedding batch: {e}")
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to submit embedding batch to OpenAI: {str(e)}"
+            )
 
         # Check initial batch status
         try:
@@ -352,10 +401,10 @@ async def hume_callback(request: Request):
         #     raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
         payload = await request.json()
-        print(f"Hume webhook received: {payload}")
 
         job_id = payload.get("job_id")
         status = payload.get("status")
+        print(f"Hume webhook received - Job ID: {job_id}, Status: {status}")
 
         if status == "COMPLETED":
             # Find conversation by hume job_id
