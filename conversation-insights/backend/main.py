@@ -310,69 +310,100 @@ async def upload_audio(
                 detail=f"Data extraction failed: {str(e)}"
             )
 
-        # === STEP 5: Create embedding batch requests (only embeddings now) ===
+        # === STEP 5: Create embeddings directly (no batch, much faster!) ===
         try:
-            batch_requests = create_batch_requests(
-                conversation_id=conversation_id,
-                chunks=chunks,
-                metadata=metadata_dict
-            )
-            embedding_count = len(batch_requests["embeddings"])
-            print(f"Created {embedding_count} embedding requests")
+            chunk_texts = [chunk["text"] for chunk in chunks]
+            print(f"Creating embeddings for {len(chunk_texts)} chunks...")
+            embeddings = openai_client.create_embeddings_batch(chunk_texts)
+            print(f"Embeddings created successfully")
         except Exception as e:
-            print(f"Error creating batch requests: {e}")
+            print(f"Error creating embeddings: {e}")
             traceback.print_exc()
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to create batch requests: {str(e)}"
+                detail=f"Failed to create embeddings: {str(e)}"
             )
 
-        # === STEP 6: Submit embedding batch ===
+        # === STEP 6: Build Pinecone records and upsert immediately ===
         try:
-            print(f"[BATCH] Submitting embedding batch with {embedding_count} requests...")
-            embedding_batch_id = openai_client.submit_batch(
-                batch_requests["embeddings"],
-                endpoint="/v1/embeddings"
+            print(f"Building Pinecone records for {len(chunks)} chunks...")
+
+            # Build conversation records
+            conversation_records = []
+            for i, chunk in enumerate(chunks):
+                chunk_id = f"{conversation_id}_chunk_{chunk['index']}"
+
+                # Get extraction data for this chunk
+                extracted = extraction_results[i]["data"] if i < len(extraction_results) else {
+                    "intents": [],
+                    "entities": [],
+                    "sentiment": 0.0,
+                    "action_items": [],
+                    "compliance_flags": []
+                }
+
+                record = {
+                    "id": chunk_id,
+                    "values": embeddings[i],
+                    "metadata": {
+                        "conversation_id": conversation_id,
+                        "chunk_index": chunk["index"],
+                        "text": chunk["text"],
+                        "token_count": chunk["token_count"],
+                        # Merge conversation metadata
+                        **metadata_dict,
+                        # Add extracted data
+                        "intents": extracted.get("intents", []),
+                        "entities": json.dumps(extracted.get("entities", [])),
+                        "sentiment": extracted.get("sentiment", 0.0),
+                        "action_items": extracted.get("action_items", []),
+                        "compliance_flags": extracted.get("compliance_flags", []),
+                        # Add speaker info
+                        "labeling_confidence": labeling_confidence
+                    }
+                }
+
+                conversation_records.append(record)
+
+            # Upsert to conversations index
+            print(f"Upserting {len(conversation_records)} records to Pinecone conversations index...")
+            pinecone_client.upsert_conversation(
+                records=conversation_records,
+                namespace="conversations"
             )
-            print(f"[BATCH] Embedding batch submitted: {embedding_batch_id}")
+            print(f"Successfully upserted conversation records")
+
         except Exception as e:
-            print(f"Error submitting embedding batch: {e}")
+            print(f"Error upserting to Pinecone: {e}")
             traceback.print_exc()
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to submit embedding batch to OpenAI: {str(e)}"
+                detail=f"Failed to store in vector database: {str(e)}"
             )
 
-        # Check initial batch status
-        try:
-            embedding_initial = openai_client.check_batch(embedding_batch_id)
-            print(f"[BATCH] Initial embedding status: {embedding_initial['status']}")
-        except Exception as e:
-            print(f"[BATCH] Warning: Could not check initial status: {e}")
+        # === STEP 7: Store for Hume webhook processing ===
+        # Generate a tracking ID for this upload
+        upload_id = f"upload_{conversation_id}"
 
-        # === STEP 7: Store job info (2 jobs: embedding + hume, extractions done synchronously) ===
-        batch_storage[embedding_batch_id] = {
+        batch_storage[upload_id] = {
             "conversation_id": conversation_id,
-            "status": "submitted",
+            "status": "processing_emotions" if hume_job_id else "completed",
             "chunks": chunks,
             "metadata": metadata_dict,
             "total_chunks": len(chunks),
             "source": "audio",
             "filename": file.filename,
-            "type": "embeddings",
-            "paired_batch_ids": {
-                "hume": hume_job_id
-            },
-            "extraction_results": extraction_results,  # Store synchronous extraction results
+            "hume_job_id": hume_job_id,
             "diarization": diarization,
             "speaker_labels": speaker_labels,
-            "labeling_confidence": labeling_confidence
+            "labeling_confidence": labeling_confidence,
+            "conversation_stored": True  # Conversation is already in Pinecone
         }
 
-        # Return embedding batch_id as primary (client will poll this one)
+        # Return success immediately (no batch polling needed!)
         return UploadResponse(
-            batch_id=embedding_batch_id,
-            status="submitted",
+            batch_id=upload_id,
+            status="processing_emotions" if hume_job_id else "completed",
             chunks=len(chunks),
             conversation_id=conversation_id
         )
@@ -485,280 +516,423 @@ async def hume_callback(request: Request):
 @app.get("/status/{batch_id}", response_model=StatusResponse)
 async def get_batch_status(batch_id: str):
     """
-    Check status of a batch job
+    Check status of upload job
 
-    Now checks THREE jobs: embeddings, extractions, AND hume prosody
-    Waits for ALL THREE to complete before processing results
+    Handles two types:
+    - Old: batch_* IDs (legacy batch API, still processing)
+    - New: upload_* IDs (direct API, instant upload)
     """
     try:
         # Check if batch_id exists in our storage
         if batch_id not in batch_storage:
-            raise HTTPException(status_code=404, detail=f"Batch {batch_id} not found")
+            raise HTTPException(status_code=404, detail=f"Upload {batch_id} not found")
 
         stored_info = batch_storage[batch_id]
-        paired_batch_ids = stored_info.get("paired_batch_ids", {})
 
-        # Check 2 job statuses (embeddings + Hume, extractions done synchronously)
-        embedding_batch_id = batch_id
-        hume_job_id = paired_batch_ids.get("hume")
+        # NEW FLOW: Direct uploads (upload_*)
+        if batch_id.startswith("upload_"):
+            return await _handle_direct_upload_status(batch_id, stored_info)
 
-        # Check embedding batch status
-        embedding_status = openai_client.check_batch(embedding_batch_id)
-
-        # Log batch status for debugging
-        print(f"[STATUS] Embedding batch {embedding_batch_id}: {embedding_status['status']} - {embedding_status['request_counts']}")
-
-        # Check Hume job status - use stored emotion data if webhook received
-        hume_status = {"state": "N/A"}
-        hume_done = False
-
-        if hume_job_id:
-            # First check if webhook has already stored emotion data
-            emotion_data = stored_info.get("emotion_data", {})
-            if emotion_data.get("hume_job_status") == "completed":
-                hume_status = {"state": "COMPLETED", "message": "Webhook received"}
-                hume_done = True
-                print(f"[STATUS] Hume job {hume_job_id}: COMPLETED (via webhook)")
-            else:
-                # Fallback to API check if no webhook data yet
-                try:
-                    hume_raw = hume_client.get_job_status(hume_job_id)
-                    # Sanitize Hume response - only extract serializable fields
-                    hume_status = {
-                        "state": hume_raw.get("state", "UNKNOWN"),
-                        "message": hume_raw.get("message", "")
-                    }
-                    if "error" in hume_raw:
-                        hume_status["error"] = str(hume_raw["error"])
-                    hume_done = hume_status.get("state") == "COMPLETED"
-                except Exception as e:
-                    print(f"Error checking Hume job status: {e}")
-                    hume_status = {"state": "ERROR", "error": str(e)}
-
-        # Calculate combined progress (2 jobs: embeddings + Hume)
-        jobs_completed = 0
-
-        embedding_done = embedding_status and embedding_status["status"] == "completed"
-
-        # Only count Hume if it was submitted
-        if hume_job_id:
-            total_jobs = 2
-            if embedding_done:
-                jobs_completed += 1
-            if hume_done:
-                jobs_completed += 1
-            progress = f"{jobs_completed}/{total_jobs} jobs complete (Embeddings + Hume)"
-            all_completed = embedding_done and hume_done
-        else:
-            total_jobs = 1
-            if embedding_done:
-                jobs_completed += 1
-            progress = f"{jobs_completed}/{total_jobs} jobs complete (Embeddings only)"
-            all_completed = embedding_done
-
-        # Process and upsert if all done
-        if all_completed and stored_info.get("processed") != True:
-            print(f"All jobs completed for {stored_info['conversation_id']}, processing...")
-
-            try:
-                # Get embedding results from batch
-                embedding_batch_results = openai_client.get_results(embedding_batch_id)
-
-                # Build embedding map
-                # New format: ONE batch result with ALL embeddings as array
-                embeddings_map = {}
-                for result in embedding_batch_results:
-                    custom_id = result.get("custom_id", "")
-                    if custom_id.startswith("embed_all_"):
-                        # Extract all embeddings from the data array
-                        response_body = result.get("response", {}).get("body", {})
-                        embeddings_data = response_body.get("data", [])
-
-                        # Map embeddings by index to chunk IDs
-                        for idx, embed_obj in enumerate(embeddings_data):
-                            chunk_id = f"{stored_info['conversation_id']}_chunk_{idx}"
-                            embedding = embed_obj.get("embedding", [])
-                            embeddings_map[chunk_id] = embedding
-
-                        print(f"Extracted {len(embeddings_data)} embeddings from single batch request")
-                        break  # Only one result now
-
-                # Get stored extraction results (already computed synchronously)
-                extraction_results = stored_info.get("extraction_results", [])
-
-                # Build extractions map
-                extractions_map = {}
-                for extraction in extraction_results:
-                    chunk_id = extraction["chunk_id"]
-                    extractions_map[chunk_id] = extraction["data"]
-
-                # Combine into Pinecone records
-                conversation_records = []
-                for chunk in stored_info["chunks"]:
-                    chunk_id = f"{stored_info['conversation_id']}_chunk_{chunk['index']}"
-
-                    if chunk_id not in embeddings_map:
-                        print(f"Warning: Missing embedding for {chunk_id}")
-                        continue
-
-                    extracted = extractions_map.get(chunk_id, {
-                        "intents": [],
-                        "entities": [],
-                        "sentiment": 0.0,
-                        "action_items": [],
-                        "compliance_flags": []
-                    })
-
-                    record = {
-                        "id": chunk_id,
-                        "values": embeddings_map[chunk_id],
-                        "metadata": {
-                            "conversation_id": stored_info["conversation_id"],
-                            "chunk_index": chunk["index"],
-                            "text": chunk["text"],
-                            "token_count": chunk["token_count"],
-                            # Merge conversation metadata
-                            **stored_info["metadata"],
-                            # Add extracted data
-                            "intents": extracted.get("intents", []),
-                            "entities": json.dumps(extracted.get("entities", [])),
-                            "sentiment": extracted.get("sentiment", 0.0),
-                            "action_items": extracted.get("action_items", []),
-                            "compliance_flags": extracted.get("compliance_flags", [])
-                        }
-                    }
-
-                    conversation_records.append(record)
-
-                # Add emotion metadata to conversation records
-                emotion_data = stored_info.get("emotion_data", {})
-                for record in conversation_records:
-                    record["metadata"]["speaker_a_top_emotions"] = emotion_data.get("speaker_a", {}).get("top_5_emotions", [])
-                    record["metadata"]["speaker_b_top_emotions"] = emotion_data.get("speaker_b", {}).get("top_5_emotions", [])
-                    record["metadata"]["labeling_confidence"] = stored_info.get("labeling_confidence", False)
-
-                # Create emotion record for emotions index
-                # Extract peak emotion names (Pinecone only accepts strings, not dicts or null)
-                speaker_a_peak = emotion_data.get("speaker_a", {}).get("peak_emotion")
-                speaker_b_peak = emotion_data.get("speaker_b", {}).get("peak_emotion")
-
-                emotion_record = {
-                    "id": stored_info["conversation_id"],
-                    "values": emotion_data.get("combined_vector", [0.0] * 192),
-                    "metadata": {
-                        "conversation_id": stored_info["conversation_id"],
-                        "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
-                        "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
-                        "speaker_a_peak": speaker_a_peak["emotion"] if speaker_a_peak else "",
-                        "speaker_b_peak": speaker_b_peak["emotion"] if speaker_b_peak else "",
-                        "speaker_labels": json.dumps(stored_info.get("speaker_labels", {})),
-                        "labeling_confidence": stored_info.get("labeling_confidence", False),
-                        **stored_info["metadata"]
-                    }
-                }
-
-                # Dual upsert to both indices
-                pinecone_client.upsert_conversation(
-                    records=conversation_records,
-                    namespace="conversations"
-                )
-
-                # Only upsert emotions if vector contains non-zero values
-                emotion_vector = emotion_record["values"]
-                has_nonzero = any(v != 0.0 for v in emotion_vector)
-                if has_nonzero:
-                    pinecone_client.upsert_emotions(
-                        records=[emotion_record],
-                        namespace="emotions"
-                    )
-                    print(f"Successfully stored {len(conversation_records)} conversation records + 1 emotion record")
-                else:
-                    print(f"WARNING: Skipping emotion record - vector is all zeros")
-                    print(f"Successfully stored {len(conversation_records)} conversation records (no emotion data)")
-
-                # Mark as processed
-                stored_info["processed"] = True
-                stored_info["status"] = "completed_and_stored"
-
-            except Exception as e:
-                print(f"Error processing results: {e}")
-                traceback.print_exc()
-                stored_info["status"] = "processing_failed"
-                stored_info["error"] = str(e)
-
-        # Determine overall status
-        if stored_info.get("processed"):
-            overall_status = "completed_and_stored"
-        elif all_completed:
-            overall_status = "completed"
-        else:
-            overall_status = "processing"
-
-        # Calculate time elapsed and detailed progress
-        import time
-        current_time = time.time()
-
-        batch_diagnostics = {
-            "embedding_batch": {
-                "id": embedding_batch_id,
-                "status": embedding_status["status"] if embedding_status else "N/A",
-                "progress": f"{embedding_status['request_counts']['completed']}/{embedding_status['request_counts']['total']}" if embedding_status else "N/A",
-                "failed": embedding_status['request_counts']['failed'] if embedding_status else 0,
-                "time_elapsed_min": round((current_time - embedding_status["created_at"]) / 60, 1) if embedding_status and embedding_status.get("created_at") else None
-            } if embedding_batch_id else None,
-            "hume_job": {
-                "id": hume_job_id,
-                "status": hume_status.get("state", "N/A"),
-                "message": hume_status.get("message", "")
-            } if hume_job_id else None
-        }
-
-        # Build response details - sanitize emotion_data for serialization
-        emotion_data = stored_info.get("emotion_data", {})
-        emotion_summary = None
-        if emotion_data:
-            emotion_summary = {
-                "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
-                "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
-                "speaker_a_peak": emotion_data.get("speaker_a", {}).get("peak_emotion"),
-                "speaker_b_peak": emotion_data.get("speaker_b", {}).get("peak_emotion"),
-                "hume_job_status": emotion_data.get("hume_job_status", "unknown")
-            }
-
-        details = {
-            "batch_diagnostics": batch_diagnostics,
-            "emotion_data_ready": emotion_data is not None,
-            "emotion_summary": emotion_summary,
-            "speaker_labels": stored_info.get("speaker_labels"),
-            "labeling_confidence": stored_info.get("labeling_confidence")
-        }
-
-        # Validate JSON serializability before returning
-        try:
-            json.dumps(details)
-        except TypeError as e:
-            print(f"[ERROR] Response contains non-serializable data: {e}")
-            print(f"[ERROR] Problematic details: {details}")
-            # Return minimal safe response
-            details = {
-                "batch_diagnostics": batch_diagnostics,
-                "error": "Response serialization error - check logs"
-            }
-
-        return StatusResponse(
-            batch_id=batch_id,
-            status=overall_status,
-            progress=progress,
-            conversation_id=stored_info["conversation_id"],
-            details=details
-        )
+        # OLD FLOW: Batch API uploads (batch_*) - for backwards compatibility
+        return await _handle_batch_upload_status(batch_id, stored_info)
 
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error checking batch status: {e}")
+        print(f"Error checking status: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to check status: {str(e)}")
+
+
+async def _handle_direct_upload_status(upload_id: str, stored_info: Dict[str, Any]) -> StatusResponse:
+    """Handle status for new direct upload flow"""
+    conversation_id = stored_info["conversation_id"]
+    hume_job_id = stored_info.get("hume_job_id")
+
+    # Check Hume status if applicable
+    hume_status = {"state": "N/A"}
+    hume_done = False
+
+    if hume_job_id:
+        emotion_data = stored_info.get("emotion_data", {})
+        if emotion_data.get("hume_job_status") == "completed":
+            hume_status = {"state": "COMPLETED", "message": "Webhook received"}
+            hume_done = True
+            print(f"[STATUS] Hume job {hume_job_id}: COMPLETED (via webhook)")
+        else:
+            # Check Hume API
+            try:
+                hume_raw = hume_client.get_job_status(hume_job_id)
+                hume_status = {
+                    "state": hume_raw.get("state", "UNKNOWN"),
+                    "message": hume_raw.get("message", "")
+                }
+                if "error" in hume_raw:
+                    hume_status["error"] = str(hume_raw["error"])
+                hume_done = hume_status.get("state") == "COMPLETED"
+            except Exception as e:
+                print(f"Error checking Hume job status: {e}")
+                hume_status = {"state": "ERROR", "error": str(e)}
+
+    # Determine overall status
+    if hume_job_id and not hume_done:
+        overall_status = "processing_emotions"
+        progress = "Conversation indexed, waiting for emotion analysis"
+    elif hume_job_id and hume_done and not stored_info.get("emotions_updated"):
+        # Hume done but emotions not added to Pinecone yet
+        overall_status = "updating_emotions"
+        progress = "Adding emotion data to index"
+
+        # Update Pinecone records with emotion data in background
+        try:
+            await _update_emotions_in_pinecone(stored_info)
+            stored_info["emotions_updated"] = True
+            overall_status = "completed"
+            progress = "Complete with emotions"
+        except Exception as e:
+            print(f"Error updating emotions: {e}")
+            overall_status = "completed"
+            progress = "Complete (emotion update failed)"
+    else:
+        overall_status = "completed"
+        progress = "Complete"
+
+    # Build diagnostics
+    diagnostics = {
+        "conversation_stored": stored_info.get("conversation_stored", False),
+        "hume_job": {
+            "id": hume_job_id,
+            "status": hume_status.get("state", "N/A"),
+            "message": hume_status.get("message", "")
+        } if hume_job_id else None
+    }
+
+    # Build emotion summary
+    emotion_data = stored_info.get("emotion_data", {})
+    emotion_summary = None
+    if emotion_data:
+        emotion_summary = {
+            "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
+            "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
+            "speaker_a_peak": emotion_data.get("speaker_a", {}).get("peak_emotion"),
+            "speaker_b_peak": emotion_data.get("speaker_b", {}).get("peak_emotion"),
+            "hume_job_status": emotion_data.get("hume_job_status", "unknown")
+        }
+
+    details = {
+        "batch_diagnostics": diagnostics,
+        "emotion_data_ready": emotion_data is not None,
+        "emotion_summary": emotion_summary,
+        "speaker_labels": stored_info.get("speaker_labels"),
+        "labeling_confidence": stored_info.get("labeling_confidence")
+    }
+
+    return StatusResponse(
+        batch_id=upload_id,
+        status=overall_status,
+        progress=progress,
+        conversation_id=conversation_id,
+        details=details
+    )
+
+
+async def _update_emotions_in_pinecone(stored_info: Dict[str, Any]):
+    """Update Pinecone records with emotion data when Hume completes"""
+    emotion_data = stored_info.get("emotion_data", {})
+    if not emotion_data:
+        return
+
+    conversation_id = stored_info["conversation_id"]
+
+    # Fetch existing conversation records and update them
+    # (For simplicity, we'll just upsert the emotion record to emotions index)
+    speaker_a_peak = emotion_data.get("speaker_a", {}).get("peak_emotion")
+    speaker_b_peak = emotion_data.get("speaker_b", {}).get("peak_emotion")
+
+    emotion_record = {
+        "id": conversation_id,
+        "values": emotion_data.get("combined_vector", [0.0] * 192),
+        "metadata": {
+            "conversation_id": conversation_id,
+            "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
+            "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
+            "speaker_a_peak": speaker_a_peak["emotion"] if speaker_a_peak else "",
+            "speaker_b_peak": speaker_b_peak["emotion"] if speaker_b_peak else "",
+            "speaker_labels": json.dumps(stored_info.get("speaker_labels", {})),
+            "labeling_confidence": stored_info.get("labeling_confidence", False),
+            **stored_info.get("metadata", {})
+        }
+    }
+
+    # Only upsert if vector has non-zero values
+    emotion_vector = emotion_record["values"]
+    has_nonzero = any(v != 0.0 for v in emotion_vector)
+    if has_nonzero:
+        pinecone_client.upsert_emotions(
+            records=[emotion_record],
+            namespace="emotions"
+        )
+        print(f"Updated emotion data for conversation: {conversation_id}")
+    else:
+        print(f"WARNING: Skipping emotion record - vector is all zeros for {conversation_id}")
+
+
+async def _handle_batch_upload_status(batch_id: str, stored_info: Dict[str, Any]) -> StatusResponse:
+    """Handle status for old batch-based upload flow (legacy)"""
+    paired_batch_ids = stored_info.get("paired_batch_ids", {})
+    embedding_batch_id = batch_id
+    hume_job_id = paired_batch_ids.get("hume")
+
+    # Check embedding batch status
+    embedding_status = openai_client.check_batch(embedding_batch_id)
+
+    # Log batch status for debugging
+    print(f"[STATUS] Embedding batch {embedding_batch_id}: {embedding_status['status']} - {embedding_status['request_counts']}")
+
+    # Check Hume job status - use stored emotion data if webhook received
+    hume_status = {"state": "N/A"}
+    hume_done = False
+
+    if hume_job_id:
+        # First check if webhook has already stored emotion data
+        emotion_data = stored_info.get("emotion_data", {})
+        if emotion_data.get("hume_job_status") == "completed":
+            hume_status = {"state": "COMPLETED", "message": "Webhook received"}
+            hume_done = True
+            print(f"[STATUS] Hume job {hume_job_id}: COMPLETED (via webhook)")
+        else:
+            # Fallback to API check if no webhook data yet
+            try:
+                hume_raw = hume_client.get_job_status(hume_job_id)
+                # Sanitize Hume response - only extract serializable fields
+                hume_status = {
+                    "state": hume_raw.get("state", "UNKNOWN"),
+                    "message": hume_raw.get("message", "")
+                }
+                if "error" in hume_raw:
+                    hume_status["error"] = str(hume_raw["error"])
+                hume_done = hume_status.get("state") == "COMPLETED"
+            except Exception as e:
+                print(f"Error checking Hume job status: {e}")
+                hume_status = {"state": "ERROR", "error": str(e)}
+
+    # Calculate combined progress (2 jobs: embeddings + Hume)
+    jobs_completed = 0
+
+    embedding_done = embedding_status and embedding_status["status"] == "completed"
+
+    # Only count Hume if it was submitted
+    if hume_job_id:
+        total_jobs = 2
+        if embedding_done:
+            jobs_completed += 1
+        if hume_done:
+            jobs_completed += 1
+        progress = f"{jobs_completed}/{total_jobs} jobs complete (Embeddings + Hume)"
+        all_completed = embedding_done and hume_done
+    else:
+        total_jobs = 1
+        if embedding_done:
+            jobs_completed += 1
+        progress = f"{jobs_completed}/{total_jobs} jobs complete (Embeddings only)"
+        all_completed = embedding_done
+
+    # Process and upsert if all done
+    if all_completed and stored_info.get("processed") != True:
+        print(f"All jobs completed for {stored_info['conversation_id']}, processing...")
+
+        try:
+            # Get embedding results from batch
+            embedding_batch_results = openai_client.get_results(embedding_batch_id)
+
+            # Build embedding map
+            # New format: ONE batch result with ALL embeddings as array
+            embeddings_map = {}
+            for result in embedding_batch_results:
+                custom_id = result.get("custom_id", "")
+                if custom_id.startswith("embed_all_"):
+                    # Extract all embeddings from the data array
+                    response_body = result.get("response", {}).get("body", {})
+                    embeddings_data = response_body.get("data", [])
+
+                    # Map embeddings by index to chunk IDs
+                    for idx, embed_obj in enumerate(embeddings_data):
+                        chunk_id = f"{stored_info['conversation_id']}_chunk_{idx}"
+                        embedding = embed_obj.get("embedding", [])
+                        embeddings_map[chunk_id] = embedding
+
+                    print(f"Extracted {len(embeddings_data)} embeddings from single batch request")
+                    break  # Only one result now
+
+            # Get stored extraction results (already computed synchronously)
+            extraction_results = stored_info.get("extraction_results", [])
+
+            # Build extractions map
+            extractions_map = {}
+            for extraction in extraction_results:
+                chunk_id = extraction["chunk_id"]
+                extractions_map[chunk_id] = extraction["data"]
+
+            # Combine into Pinecone records
+            conversation_records = []
+            for chunk in stored_info["chunks"]:
+                chunk_id = f"{stored_info['conversation_id']}_chunk_{chunk['index']}"
+
+                if chunk_id not in embeddings_map:
+                    print(f"Warning: Missing embedding for {chunk_id}")
+                    continue
+
+                extracted = extractions_map.get(chunk_id, {
+                    "intents": [],
+                    "entities": [],
+                    "sentiment": 0.0,
+                    "action_items": [],
+                    "compliance_flags": []
+                })
+
+                record = {
+                    "id": chunk_id,
+                    "values": embeddings_map[chunk_id],
+                    "metadata": {
+                        "conversation_id": stored_info["conversation_id"],
+                        "chunk_index": chunk["index"],
+                        "text": chunk["text"],
+                        "token_count": chunk["token_count"],
+                        # Merge conversation metadata
+                        **stored_info["metadata"],
+                        # Add extracted data
+                        "intents": extracted.get("intents", []),
+                        "entities": json.dumps(extracted.get("entities", [])),
+                        "sentiment": extracted.get("sentiment", 0.0),
+                        "action_items": extracted.get("action_items", []),
+                        "compliance_flags": extracted.get("compliance_flags", [])
+                    }
+                }
+
+                conversation_records.append(record)
+
+            # Add emotion metadata to conversation records
+            emotion_data = stored_info.get("emotion_data", {})
+            for record in conversation_records:
+                record["metadata"]["speaker_a_top_emotions"] = emotion_data.get("speaker_a", {}).get("top_5_emotions", [])
+                record["metadata"]["speaker_b_top_emotions"] = emotion_data.get("speaker_b", {}).get("top_5_emotions", [])
+                record["metadata"]["labeling_confidence"] = stored_info.get("labeling_confidence", False)
+
+            # Create emotion record for emotions index
+            # Extract peak emotion names (Pinecone only accepts strings, not dicts or null)
+            speaker_a_peak = emotion_data.get("speaker_a", {}).get("peak_emotion")
+            speaker_b_peak = emotion_data.get("speaker_b", {}).get("peak_emotion")
+
+            emotion_record = {
+                "id": stored_info["conversation_id"],
+                "values": emotion_data.get("combined_vector", [0.0] * 192),
+                "metadata": {
+                    "conversation_id": stored_info["conversation_id"],
+                    "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
+                    "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
+                    "speaker_a_peak": speaker_a_peak["emotion"] if speaker_a_peak else "",
+                    "speaker_b_peak": speaker_b_peak["emotion"] if speaker_b_peak else "",
+                    "speaker_labels": json.dumps(stored_info.get("speaker_labels", {})),
+                    "labeling_confidence": stored_info.get("labeling_confidence", False),
+                    **stored_info["metadata"]
+                }
+            }
+
+            # Dual upsert to both indices
+            pinecone_client.upsert_conversation(
+                records=conversation_records,
+                namespace="conversations"
+            )
+
+            # Only upsert emotions if vector contains non-zero values
+            emotion_vector = emotion_record["values"]
+            has_nonzero = any(v != 0.0 for v in emotion_vector)
+            if has_nonzero:
+                pinecone_client.upsert_emotions(
+                    records=[emotion_record],
+                    namespace="emotions"
+                )
+                print(f"Successfully stored {len(conversation_records)} conversation records + 1 emotion record")
+            else:
+                print(f"WARNING: Skipping emotion record - vector is all zeros")
+                print(f"Successfully stored {len(conversation_records)} conversation records (no emotion data)")
+
+            # Mark as processed
+            stored_info["processed"] = True
+            stored_info["status"] = "completed_and_stored"
+
+        except Exception as e:
+            print(f"Error processing results: {e}")
+            traceback.print_exc()
+            stored_info["status"] = "processing_failed"
+            stored_info["error"] = str(e)
+
+    # Determine overall status
+    if stored_info.get("processed"):
+        overall_status = "completed_and_stored"
+    elif all_completed:
+        overall_status = "completed"
+    else:
+        overall_status = "processing"
+
+    # Calculate time elapsed and detailed progress
+    import time
+    current_time = time.time()
+
+    batch_diagnostics = {
+        "embedding_batch": {
+            "id": embedding_batch_id,
+            "status": embedding_status["status"] if embedding_status else "N/A",
+            "progress": f"{embedding_status['request_counts']['completed']}/{embedding_status['request_counts']['total']}" if embedding_status else "N/A",
+            "failed": embedding_status['request_counts']['failed'] if embedding_status else 0,
+            "time_elapsed_min": round((current_time - embedding_status["created_at"]) / 60, 1) if embedding_status and embedding_status.get("created_at") else None
+        } if embedding_batch_id else None,
+        "hume_job": {
+            "id": hume_job_id,
+            "status": hume_status.get("state", "N/A"),
+            "message": hume_status.get("message", "")
+        } if hume_job_id else None
+    }
+
+    # Build response details - sanitize emotion_data for serialization
+    emotion_data = stored_info.get("emotion_data", {})
+    emotion_summary = None
+    if emotion_data:
+        emotion_summary = {
+            "speaker_a_top_5": emotion_data.get("speaker_a", {}).get("top_5_emotions", []),
+            "speaker_b_top_5": emotion_data.get("speaker_b", {}).get("top_5_emotions", []),
+            "speaker_a_peak": emotion_data.get("speaker_a", {}).get("peak_emotion"),
+            "speaker_b_peak": emotion_data.get("speaker_b", {}).get("peak_emotion"),
+            "hume_job_status": emotion_data.get("hume_job_status", "unknown")
+        }
+
+    details = {
+        "batch_diagnostics": batch_diagnostics,
+        "emotion_data_ready": emotion_data is not None,
+        "emotion_summary": emotion_summary,
+        "speaker_labels": stored_info.get("speaker_labels"),
+        "labeling_confidence": stored_info.get("labeling_confidence")
+    }
+
+    # Validate JSON serializability before returning
+    try:
+        json.dumps(details)
+    except TypeError as e:
+        print(f"[ERROR] Response contains non-serializable data: {e}")
+        print(f"[ERROR] Problematic details: {details}")
+        # Return minimal safe response
+        details = {
+            "batch_diagnostics": batch_diagnostics,
+            "error": "Response serialization error - check logs"
+        }
+
+    return StatusResponse(
+        batch_id=batch_id,
+        status=overall_status,
+        progress=progress,
+        conversation_id=stored_info["conversation_id"],
+        details=details
+    )
 
 
 @app.get("/debug/batch/{batch_id}")

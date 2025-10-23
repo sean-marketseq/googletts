@@ -170,6 +170,34 @@ class OpenAIBatchClient:
         )
         return response.data[0].embedding
 
+    def create_embeddings_batch(self, texts: List[str], model: str = "text-embedding-3-small") -> List[List[float]]:
+        """
+        Create embeddings for multiple texts in one API call (up to 2048 texts)
+
+        Args:
+            texts: List of texts to embed
+            model: Embedding model to use
+
+        Returns:
+            List of embedding vectors (1024 dimensions each)
+        """
+        if not texts:
+            return []
+
+        print(f"Creating embeddings for {len(texts)} texts...")
+
+        response = self.client.embeddings.create(
+            model=model,
+            input=texts,
+            dimensions=1024
+        )
+
+        # Extract embeddings in order
+        embeddings = [item.embedding for item in response.data]
+        print(f"Created {len(embeddings)} embeddings")
+
+        return embeddings
+
     def extract_conversation_data(self, text: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
         """
         Extract structured data from conversation chunk using direct API call
