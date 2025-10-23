@@ -362,9 +362,11 @@ Query: """
             if speaker_a_emotions or speaker_b_emotions:
                 conv_text += f"\nEmotion Analysis (Hume AI):\n"
                 if speaker_a_emotions:
-                    conv_text += f"  Speaker A top emotions: {', '.join(speaker_a_emotions[:5])}\n"
+                    # Speaker A = CALLER (customer)
+                    conv_text += f"  CALLER emotions: {', '.join(speaker_a_emotions[:5])}\n"
                 if speaker_b_emotions:
-                    conv_text += f"  Speaker B top emotions: {', '.join(speaker_b_emotions[:5])}\n"
+                    # Speaker B = AGENT (assistant)
+                    conv_text += f"  AGENT emotions: {', '.join(speaker_b_emotions[:5])}\n"
 
                 # Add emotion match info if this was an emotion-based result
                 if chunk.get('emotion_match'):
