@@ -286,7 +286,15 @@ Please provide a clear, well-structured answer."""
             max_completion_tokens=1000
         )
 
-        return response.choices[0].message.content
+        answer = response.choices[0].message.content
+
+        # Debug: Check if answer is None or empty
+        if not answer:
+            print(f"WARNING: GPT-5 returned empty/None answer. Response: {response}")
+            print(f"  Finish reason: {response.choices[0].finish_reason if response.choices else 'N/A'}")
+            return "Unable to generate answer - model returned empty response."
+
+        return answer
 
     def transcribe_audio(self, audio_file: BinaryIO, filename: str) -> str:
         """
