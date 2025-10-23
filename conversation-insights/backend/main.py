@@ -1044,6 +1044,39 @@ async def query_conversations(request: QueryRequest):
                         meta["speaker_a_top_emotions"] = match["metadata"].get("speaker_a_top_5", [])
                         meta["speaker_b_top_emotions"] = match["metadata"].get("speaker_b_top_5", [])
 
+        # Step 5.5: Fetch emotion data for ALL matched conversations (not just emotion matches)
+        # This ensures we always have emotion data even if query wasn't emotion-focused
+        print(f"Fetching emotion data for {len(conversation_scores)} matched conversations...")
+        try:
+            if not pinecone_client.emotion_index:
+                pinecone_client.setup_emotion_index(dimension=192)
+
+            # Fetch emotion records for all matched conversation IDs
+            for conv_id in conversation_scores.keys():
+                try:
+                    # Try to fetch emotion record for this conversation
+                    emotion_fetch = pinecone_client.emotion_index.fetch(
+                        ids=[conv_id],
+                        namespace="emotions"
+                    )
+
+                    if conv_id in emotion_fetch.vectors:
+                        emotion_meta = emotion_fetch.vectors[conv_id].metadata
+                        # Enrich all chunks for this conversation with emotion data
+                        if conv_id in all_metadata:
+                            for meta in all_metadata[conv_id]:
+                                if not meta.get('speaker_a_top_emotions'):  # Don't override if already set
+                                    meta['speaker_a_top_emotions'] = emotion_meta.get('speaker_a_top_5', [])
+                                if not meta.get('speaker_b_top_emotions'):
+                                    meta['speaker_b_top_emotions'] = emotion_meta.get('speaker_b_top_5', [])
+                except Exception as e:
+                    # If emotion data doesn't exist for this conversation, that's okay
+                    pass
+
+            print(f"Emotion data enrichment complete")
+        except Exception as e:
+            print(f"Warning: Could not fetch emotion data: {e}")
+
         # Sort by combined score
         ranked_conversations = sorted(
             conversation_scores.items(),

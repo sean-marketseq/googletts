@@ -339,39 +339,70 @@ Query: """
 
     def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5-2025-08-07") -> str:
         """
-        Use GPT to synthesize an answer from retrieved chunks
+        Use GPT to synthesize an answer from retrieved chunks with emotion data
 
         Args:
             query: User's question
-            context_chunks: List of relevant conversation chunks
+            context_chunks: List of relevant conversation chunks with emotion metadata
             model: Model to use for synthesis
 
         Returns:
             Synthesized answer
         """
-        # Format context
-        context_text = "\n\n---\n\n".join([
-            f"Conversation {chunk.get('conversation_id', 'unknown')} (Date: {chunk.get('date', 'unknown')}):\n{chunk.get('text', '')}"
-            for chunk in context_chunks
-        ])
+        # Format context with emotion data
+        context_parts = []
+        for chunk in context_chunks:
+            conv_text = f"Conversation {chunk.get('conversation_id', 'unknown')} (Date: {chunk.get('date', 'unknown')}):\n"
+            conv_text += f"Text: {chunk.get('text', '')}\n"
+
+            # Add emotion data if available
+            speaker_a_emotions = chunk.get('speaker_a_top_emotions', [])
+            speaker_b_emotions = chunk.get('speaker_b_top_emotions', [])
+
+            if speaker_a_emotions or speaker_b_emotions:
+                conv_text += f"\nEmotion Analysis (Hume AI):\n"
+                if speaker_a_emotions:
+                    conv_text += f"  Speaker A top emotions: {', '.join(speaker_a_emotions[:5])}\n"
+                if speaker_b_emotions:
+                    conv_text += f"  Speaker B top emotions: {', '.join(speaker_b_emotions[:5])}\n"
+
+                # Add emotion match info if this was an emotion-based result
+                if chunk.get('emotion_match'):
+                    conv_text += f"  Emotion match score: {chunk.get('emotion_score', 0):.3f}\n"
+
+            # Add sentiment if available
+            sentiment = chunk.get('sentiment')
+            if sentiment is not None:
+                conv_text += f"Sentiment: {sentiment:.2f}\n"
+
+            # Add intents if available
+            intents = chunk.get('intents', [])
+            if intents:
+                conv_text += f"Intents: {', '.join(intents)}\n"
+
+            context_parts.append(conv_text)
+
+        context_text = "\n\n---\n\n".join(context_parts)
 
         system_prompt = """You are a conversation insights assistant. Your job is to answer questions about customer conversations based on the provided context.
 
 Guidelines:
-- Only use information from the provided conversation chunks
+- Use BOTH conversation text AND emotion analysis data (from Hume AI) in your answers
+- When discussing emotions, cite specific emotion names from the Hume AI data (e.g., "Anger", "Frustration", "Anxiety")
+- When asked about emotional states, prioritize Hume AI emotion data over text-based inference
 - Be specific and cite which conversation(s) you're referencing
-- If you can't answer based on the context, say so
-- Highlight patterns, trends, or important insights
+- Include emotion scores and specific emotion names when relevant to the query
+- Highlight patterns, trends, or important insights from both text and emotions
 - Keep your answer concise but informative"""
 
-        user_prompt = f"""Based on the following conversation excerpts, please answer this question:
+        user_prompt = f"""Based on the following conversation excerpts (including Hume AI emotion analysis), please answer this question:
 
 Question: {query}
 
 Context:
 {context_text}
 
-Please provide a clear, well-structured answer."""
+Please provide a clear, well-structured answer that leverages both the conversation text and the emotion analysis data."""
 
         response = self.client.chat.completions.create(
             model=model,
