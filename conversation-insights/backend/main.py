@@ -1045,6 +1045,63 @@ async def get_all_batches():
     }
 
 
+@app.get("/debug/emotions")
+async def debug_emotions():
+    """
+    Debug endpoint to check emotion vectors in Pinecone
+
+    Returns stats and sample emotion records to verify they're being stored
+    """
+    try:
+        if not pinecone_client.emotion_index:
+            pinecone_client.setup_emotion_index(dimension=192)
+
+        # Get index stats
+        stats = pinecone_client.emotion_index.describe_index_stats()
+
+        # Try to query for some emotion records
+        dummy_vector = [0.0] * 192
+        sample_results = pinecone_client.emotion_index.query(
+            vector=dummy_vector,
+            top_k=10,
+            namespace="emotions",
+            include_metadata=True
+        )
+
+        # Format sample results
+        samples = []
+        for match in sample_results.matches:
+            # Check if vector has non-zero values
+            has_data = any(v != 0.0 for v in match.values) if hasattr(match, 'values') and match.values else False
+
+            samples.append({
+                "id": match.id,
+                "score": match.score,
+                "has_nonzero_vector": has_data,
+                "metadata_keys": list(match.metadata.keys()) if match.metadata else [],
+                "speaker_a_top_5": match.metadata.get("speaker_a_top_5", [])[:3] if match.metadata else [],
+                "speaker_b_top_5": match.metadata.get("speaker_b_top_5", [])[:3] if match.metadata else []
+            })
+
+        return {
+            "index_stats": {
+                "total_vector_count": stats.total_vector_count,
+                "namespaces": stats.namespaces
+            },
+            "sample_count": len(samples),
+            "samples": samples,
+            "message": f"Found {len(samples)} emotion records. Check 'has_nonzero_vector' to verify data quality."
+        }
+
+    except Exception as e:
+        print(f"Error debugging emotions: {e}")
+        traceback.print_exc()
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 @app.delete("/purge-index")
 async def purge_index():
     """
