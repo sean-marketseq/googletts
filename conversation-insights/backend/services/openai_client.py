@@ -358,15 +358,38 @@ Query: """
             # Add emotion data if available
             speaker_a_emotions = chunk.get('speaker_a_top_emotions', [])
             speaker_b_emotions = chunk.get('speaker_b_top_emotions', [])
+            labeling_confidence = chunk.get('labeling_confidence', False)
+            speaker_labels = chunk.get('speaker_labels', {})
 
             if speaker_a_emotions or speaker_b_emotions:
                 conv_text += f"\nEmotion Analysis (Hume AI):\n"
+
+                # Determine appropriate labels based on confidence
+                if labeling_confidence and ('AGENT' in speaker_labels.values() or 'CALLER' in speaker_labels.values()):
+                    # High confidence - use CALLER/AGENT labels
+                    # Determine which speaker is which based on speaker_labels mapping
+                    speaker_a_label = "CALLER"  # Default assumption
+                    speaker_b_label = "AGENT"
+
+                    # Check actual mapping
+                    for speaker_id, label in speaker_labels.items():
+                        if label == "AGENT" and "SPEAKER_0" in speaker_id:
+                            speaker_a_label = "AGENT"
+                            speaker_b_label = "CALLER"
+                            break
+                else:
+                    # Low confidence - use neutral labels
+                    speaker_a_label = "Speaker A"
+                    speaker_b_label = "Speaker B"
+
                 if speaker_a_emotions:
-                    # Speaker A = CALLER (customer)
-                    conv_text += f"  CALLER emotions: {', '.join(speaker_a_emotions[:5])}\n"
+                    conv_text += f"  {speaker_a_label} emotions: {', '.join(speaker_a_emotions[:5])}\n"
                 if speaker_b_emotions:
-                    # Speaker B = AGENT (assistant)
-                    conv_text += f"  AGENT emotions: {', '.join(speaker_b_emotions[:5])}\n"
+                    conv_text += f"  {speaker_b_label} emotions: {', '.join(speaker_b_emotions[:5])}\n"
+
+                # Add confidence note if low
+                if not labeling_confidence:
+                    conv_text += f"  (Note: Speaker identification has low confidence)\n"
 
                 # Add emotion match info if this was an emotion-based result
                 if chunk.get('emotion_match'):
@@ -395,6 +418,8 @@ Guidelines:
 - Be specific and cite which conversation(s) you're referencing
 - Include emotion scores and specific emotion names when relevant to the query
 - Highlight patterns, trends, or important insights from both text and emotions
+- Pay attention to speaker labels: "CALLER" and "AGENT" indicate high-confidence speaker identification, while "Speaker A" and "Speaker B" indicate uncertain speaker identification
+- When speaker identification has low confidence, note this uncertainty in your answer
 - Keep your answer concise but informative"""
 
         user_prompt = f"""Based on the following conversation excerpts (including Hume AI emotion analysis), please answer this question:

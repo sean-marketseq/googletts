@@ -1069,6 +1069,12 @@ async def query_conversations(request: QueryRequest):
                                     meta['speaker_a_top_emotions'] = emotion_meta.get('speaker_a_top_5', [])
                                 if not meta.get('speaker_b_top_emotions'):
                                     meta['speaker_b_top_emotions'] = emotion_meta.get('speaker_b_top_5', [])
+                                # Also fetch labeling confidence and speaker labels
+                                if not meta.get('labeling_confidence'):
+                                    meta['labeling_confidence'] = emotion_meta.get('labeling_confidence', False)
+                                if not meta.get('speaker_labels'):
+                                    speaker_labels_str = emotion_meta.get('speaker_labels', '{}')
+                                    meta['speaker_labels'] = json.loads(speaker_labels_str) if isinstance(speaker_labels_str, str) else speaker_labels_str
                 except Exception as e:
                     # If emotion data doesn't exist for this conversation, that's okay
                     pass
