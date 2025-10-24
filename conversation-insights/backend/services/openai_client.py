@@ -497,37 +497,50 @@ Context:
 
 Please provide a clear, well-structured answer that leverages both the conversation text and the emotion analysis data."""
 
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            # GPT-5 uses reasoning tokens (like o1) - need much higher limit
-            # to allow for both reasoning AND the actual answer text
-            max_completion_tokens=8000
-        )
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                # GPT-5 uses reasoning tokens (like o1) - need much higher limit
+                # to allow for both reasoning AND the actual answer text
+                max_completion_tokens=8000
+            )
 
-        # Debug: Print full response structure
-        print(f"[GPT-5 DEBUG] Response type: {type(response)}")
-        print(f"[GPT-5 DEBUG] Response model: {response.model if hasattr(response, 'model') else 'N/A'}")
-        print(f"[GPT-5 DEBUG] Choices count: {len(response.choices) if hasattr(response, 'choices') else 0}")
+            # Debug: Print full response structure
+            print(f"[GPT-5 DEBUG] Response type: {type(response)}")
+            print(f"[GPT-5 DEBUG] Response model: {response.model if hasattr(response, 'model') else 'N/A'}")
+            print(f"[GPT-5 DEBUG] Choices count: {len(response.choices) if hasattr(response, 'choices') else 0}")
 
-        if response.choices:
-            choice = response.choices[0]
-            print(f"[GPT-5 DEBUG] Finish reason: {choice.finish_reason}")
-            print(f"[GPT-5 DEBUG] Message type: {type(choice.message)}")
-            print(f"[GPT-5 DEBUG] Message content: {choice.message.content}")
-            print(f"[GPT-5 DEBUG] Message content type: {type(choice.message.content)}")
+            if response.choices:
+                choice = response.choices[0]
+                print(f"[GPT-5 DEBUG] Finish reason: {choice.finish_reason}")
+                print(f"[GPT-5 DEBUG] Message type: {type(choice.message)}")
+                print(f"[GPT-5 DEBUG] Has content attr: {hasattr(choice.message, 'content')}")
+                print(f"[GPT-5 DEBUG] Message content: {choice.message.content}")
+                print(f"[GPT-5 DEBUG] Message content type: {type(choice.message.content)}")
 
-        answer = response.choices[0].message.content
+            answer = response.choices[0].message.content
 
-        # Debug: Check if answer is None or empty
-        if not answer:
-            print(f"WARNING: GPT-5 returned empty/None answer")
-            return "Unable to generate answer - model returned empty response."
+            # Debug: Check if answer is None or empty
+            if not answer:
+                print(f"WARNING: GPT-5 returned empty/None answer")
+                print(f"[GPT-5 DEBUG] Full response object: {response}")
+                print(f"[GPT-5 DEBUG] Context length: {len(context_text)} chars")
+                print(f"[GPT-5 DEBUG] Query length: {len(query)} chars")
+                return "Unable to generate answer - model returned empty response."
 
-        return answer
+            return answer
+
+        except Exception as e:
+            print(f"ERROR in synthesize_answer: {e}")
+            print(f"[GPT-5 DEBUG] Context length: {len(context_text)} chars")
+            print(f"[GPT-5 DEBUG] Query length: {len(query)} chars")
+            import traceback
+            traceback.print_exc()
+            return f"Unable to generate answer - error: {str(e)}"
 
     def transcribe_audio(self, audio_file: BinaryIO, filename: str) -> str:
         """
