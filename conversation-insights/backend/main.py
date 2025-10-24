@@ -1131,8 +1131,22 @@ async def query_conversations(request: QueryRequest):
                 processing_time_ms=(time.time() - start_time) * 1000
             )
 
-        # Step 3: Take top 20 for synthesis
-        top_matches = matches[:20]
+        # Step 3: Take top matches for synthesis
+        # For complex queries with large context, reduce chunk count to avoid token limits
+        # Estimate context size and adjust accordingly
+        estimated_context_size = sum(len(match["metadata"].get("text", "")) for match in matches[:20])
+
+        if estimated_context_size > 25000:  # > 25KB of text
+            num_chunks = 10
+            print(f"Large context detected ({estimated_context_size} chars), using top {num_chunks} chunks")
+        elif estimated_context_size > 15000:  # > 15KB
+            num_chunks = 15
+            print(f"Medium context detected ({estimated_context_size} chars), using top {num_chunks} chunks")
+        else:
+            num_chunks = 20
+            print(f"Normal context ({estimated_context_size} chars), using top {num_chunks} chunks")
+
+        top_matches = matches[:num_chunks]
         context_chunks = [match["metadata"] for match in top_matches]
 
         # Synthesize answer with GPT
