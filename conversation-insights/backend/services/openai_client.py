@@ -415,6 +415,8 @@ Query: """
         Returns:
             Synthesized answer
         """
+        print(f"[SYNTHESIZE] Starting synthesis with {len(context_chunks)} chunks")
+
         # Format context with emotion data
         context_parts = []
         for chunk in context_chunks:
@@ -425,13 +427,27 @@ Query: """
             speaker_a_emotions = chunk.get('speaker_a_top_emotions', [])
             speaker_b_emotions = chunk.get('speaker_b_top_emotions', [])
             labeling_confidence = chunk.get('labeling_confidence', False)
-            speaker_labels = chunk.get('speaker_labels', {})
+            speaker_labels_raw = chunk.get('speaker_labels', {})
+
+            # Ensure speaker_labels is a dict (might be JSON string from Pinecone)
+            if isinstance(speaker_labels_raw, str):
+                try:
+                    speaker_labels = json.loads(speaker_labels_raw) if speaker_labels_raw else {}
+                except:
+                    speaker_labels = {}
+            else:
+                speaker_labels = speaker_labels_raw if speaker_labels_raw else {}
 
             if speaker_a_emotions or speaker_b_emotions:
                 conv_text += f"\nEmotion Analysis (Hume AI):\n"
 
                 # Determine appropriate labels based on confidence
-                if labeling_confidence and ('AGENT' in speaker_labels.values() or 'CALLER' in speaker_labels.values()):
+                try:
+                    has_agent_caller = labeling_confidence and ('AGENT' in speaker_labels.values() or 'CALLER' in speaker_labels.values())
+                except:
+                    has_agent_caller = False
+
+                if has_agent_caller:
                     # High confidence - use CALLER/AGENT labels
                     # Determine which speaker is which based on speaker_labels mapping
                     speaker_a_label = "CALLER"  # Default assumption
@@ -474,6 +490,7 @@ Query: """
             context_parts.append(conv_text)
 
         context_text = "\n\n---\n\n".join(context_parts)
+        print(f"[SYNTHESIZE] Formatted context: {len(context_text)} chars")
 
         system_prompt = """You are a conversation insights assistant. Your job is to answer questions about customer conversations based on the provided context.
 
@@ -497,6 +514,7 @@ Context:
 
 Please provide a clear, well-structured answer that leverages both the conversation text and the emotion analysis data."""
 
+        print(f"[SYNTHESIZE] Calling GPT-5 with model={model}")
         try:
             response = self.client.chat.completions.create(
                 model=model,
