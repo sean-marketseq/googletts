@@ -506,7 +506,8 @@ Please provide a clear, well-structured answer that leverages both the conversat
                 ],
                 # GPT-5 uses reasoning tokens (like o1) - need much higher limit
                 # to allow for both reasoning AND the actual answer text
-                max_completion_tokens=8000
+                # For complex queries, reasoning can use 8000+ tokens alone
+                max_completion_tokens=16000
             )
 
             # Debug: Print full response structure
