@@ -1139,11 +1139,11 @@ async def query_conversations(request: QueryRequest):
         for match in top_matches[:10]:  # Return top 10 sources
             metadata = match["metadata"]
             source = {
-                "conversation_id": metadata.get("conversation_id"),
-                "date": metadata.get("date"),
+                "conversation_id": metadata.get("conversation_id", "unknown"),
+                "date": metadata.get("date", "unknown"),
                 "score": match["score"],
                 "text": metadata.get("text", "")[:200] + "...",  # Truncate for display
-                "sentiment": metadata.get("sentiment"),
+                "sentiment": metadata.get("sentiment", 0.0),
                 "intents": metadata.get("intents", [])
             }
 
