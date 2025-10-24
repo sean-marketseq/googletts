@@ -271,6 +271,24 @@ async def upload_audio(
             # Continue without sentiment timeline if it fails
             sentiment_timeline = []
 
+        # === STEP 1.6: Extract conversation-level metadata ===
+        try:
+            transcript = diarization["full_transcript"]
+            print(f"Extracting conversation-level metadata from full transcript...")
+            conversation_metadata = openai_client.extract_conversation_metadata(transcript)
+            print(f"Conversation metadata extracted: {len(conversation_metadata.get('intents', []))} intents, "
+                  f"{len(conversation_metadata.get('action_items', []))} action items")
+        except Exception as e:
+            print(f"Warning: Conversation metadata extraction failed: {e}")
+            traceback.print_exc()
+            # Continue with empty metadata if extraction fails
+            conversation_metadata = {
+                "intents": [],
+                "entities": [],
+                "action_items": [],
+                "compliance_flags": []
+            }
+
         # === STEP 2: Submit to Hume (with error handling) ===
         hume_job_id = None
         try:
@@ -299,18 +317,15 @@ async def upload_audio(
             )
 
         # === STEP 4: Map sentiment timeline to chunks ===
-        # For each chunk, calculate average sentiment from overlapping turns
-        def calculate_chunk_sentiment(chunk_text: str, sentiment_timeline: List[Dict]) -> float:
-            """Calculate sentiment for a chunk based on overlapping timeline entries"""
-            if not sentiment_timeline:
-                return 0.0
-
-            # Simple approach: average all sentiments
-            # (More sophisticated: weight by text overlap, but this is simpler)
+        # For each chunk, calculate average sentiment from timeline
+        # Since we don't have precise text-to-turn mapping, use overall average
+        # (Timeline is stored separately for detailed analysis)
+        overall_sentiment = 0.0
+        if sentiment_timeline:
             total_sentiment = sum(entry["sentiment"] for entry in sentiment_timeline)
-            return total_sentiment / len(sentiment_timeline) if sentiment_timeline else 0.0
+            overall_sentiment = total_sentiment / len(sentiment_timeline)
 
-        print(f"Mapping sentiment timeline to {len(chunks)} chunks...")
+        print(f"Calculated overall sentiment: {overall_sentiment:.3f} from {len(sentiment_timeline)} turns")
 
         # === STEP 5: Create embeddings directly (no batch, much faster!) ===
         try:
@@ -335,9 +350,6 @@ async def upload_audio(
             for i, chunk in enumerate(chunks):
                 chunk_id = f"{conversation_id}_chunk_{chunk['index']}"
 
-                # Calculate sentiment for this chunk from timeline
-                chunk_sentiment = calculate_chunk_sentiment(chunk["text"], sentiment_timeline)
-
                 record = {
                     "id": chunk_id,
                     "values": embeddings[i],
@@ -348,9 +360,14 @@ async def upload_audio(
                         "token_count": chunk["token_count"],
                         # Merge conversation metadata
                         **metadata_dict,
-                        # Add timeline-based sentiment
-                        "sentiment": chunk_sentiment,
+                        # Add timeline-based sentiment (overall for conversation)
+                        "sentiment": overall_sentiment,
                         "has_sentiment_timeline": len(sentiment_timeline) > 0,
+                        # Add conversation-level metadata
+                        "intents": conversation_metadata.get("intents", []),
+                        "entities": json.dumps(conversation_metadata.get("entities", [])),
+                        "action_items": conversation_metadata.get("action_items", []),
+                        "compliance_flags": conversation_metadata.get("compliance_flags", []),
                         # Add speaker info
                         "labeling_confidence": labeling_confidence
                     }
@@ -391,6 +408,7 @@ async def upload_audio(
             "speaker_labels": speaker_labels,
             "labeling_confidence": labeling_confidence,
             "sentiment_timeline": sentiment_timeline,
+            "conversation_metadata": conversation_metadata,
             "conversation_stored": True  # Conversation is already in Pinecone
         }
 

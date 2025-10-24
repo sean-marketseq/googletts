@@ -198,6 +198,72 @@ class OpenAIBatchClient:
 
         return embeddings
 
+    def extract_conversation_metadata(self, text: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
+        """
+        Extract conversation-level metadata from full transcript (not per chunk)
+
+        Args:
+            text: Full conversation transcript
+            model: Model to use for extraction
+
+        Returns:
+            Dictionary with intents, entities, action_items, compliance_flags
+        """
+        extraction_prompt = """Analyze this full conversation and extract:
+- intents: Overall customer intents throughout the call (e.g., ["cancel_subscription", "request_discount"])
+- entities: Key entities mentioned (e.g., [{"type": "product", "value": "subscription"}])
+- action_items: Action items from the entire conversation (e.g., ["check for discounts", "process cancellation"])
+- compliance_flags: Any compliance issues detected (e.g., ["missing data privacy notice"])
+
+Return only valid JSON matching this schema:
+{
+  "intents": ["string"],
+  "entities": [{"type": "string", "value": "string"}],
+  "action_items": ["string"],
+  "compliance_flags": ["string"]
+}
+
+Full conversation:
+"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a conversation analysis assistant. Extract structured metadata from full conversations and return only valid JSON. Your response must be valid JSON only, no other text."
+                    },
+                    {
+                        "role": "user",
+                        "content": extraction_prompt + text
+                    }
+                ],
+                temperature=0.3
+            )
+
+            content = response.choices[0].message.content
+            extracted_data = json.loads(content)
+
+            return extracted_data
+
+        except json.JSONDecodeError as e:
+            print(f"Error parsing conversation metadata JSON: {e}")
+            return {
+                "intents": [],
+                "entities": [],
+                "action_items": [],
+                "compliance_flags": []
+            }
+        except Exception as e:
+            print(f"Error during conversation metadata extraction: {e}")
+            return {
+                "intents": [],
+                "entities": [],
+                "action_items": [],
+                "compliance_flags": []
+            }
+
     def extract_conversation_data(self, text: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
         """
         Extract structured data from conversation chunk using direct API call
