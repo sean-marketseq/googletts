@@ -1106,14 +1106,21 @@ async def query_conversations(request: QueryRequest):
 
         # Get matches for top conversations
         matches = []
-        for conv_id, score in ranked_conversations[:request.top_k]:
-            if conv_id in all_metadata:
-                for meta in all_metadata[conv_id]:
-                    matches.append({
-                        "id": meta.get("chunk_id", conv_id),
-                        "score": score,
-                        "metadata": meta
-                    })
+        try:
+            for conv_id, score in ranked_conversations[:request.top_k]:
+                if conv_id in all_metadata:
+                    for meta in all_metadata[conv_id]:
+                        matches.append({
+                            "id": meta.get("chunk_id", conv_id),
+                            "score": score,
+                            "metadata": meta
+                        })
+        except Exception as e:
+            print(f"ERROR building matches: {e}")
+            print(f"conv_id: {conv_id}, score: {score}")
+            print(f"all_metadata keys: {list(all_metadata.keys())[:5]}")
+            traceback.print_exc()
+            raise
 
         print(f"Returning {len(matches)} total chunks from top conversations")
 
