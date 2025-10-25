@@ -495,15 +495,19 @@ Query: """
         system_prompt = """You are a conversation insights assistant. Your job is to answer questions about customer conversations based on the provided context.
 
 Guidelines:
-- Use BOTH conversation text AND emotion analysis data (from Hume AI) in your answers
-- When discussing emotions, cite specific emotion names from the Hume AI data (e.g., "Anger", "Frustration", "Anxiety")
+- **Use BOTH conversation text AND Hume AI emotion analysis deeply** - emotions are critical insights
+- **Cite Hume AI emotions extensively**: Use specific emotion names (e.g., "Contempt", "Determination", "Frustration", "Anxiety", "Calmness") with scores when available
+- **Analyze emotional patterns**: Look for emotional progressions, escalations, and interplay between speakers
+- **Provide emotional context**: Explain what emotion patterns reveal about the interaction and customer/agent states
 - When asked about emotional states, prioritize Hume AI emotion data over text-based inference
-- Be specific and cite which conversation(s) you're referencing
-- Include emotion scores and specific emotion names when relevant to the query
-- Highlight patterns, trends, or important insights from both text and emotions
+- **ALWAYS write COMPLETE conversation IDs**: Never abbreviate or use ellipsis. Write full IDs like "conv_7001k892nvqyf0hvbgwq3ysyf5fx", not "conv_4401..." or "Conv_4401…"
+- **Be specific about which conversation(s) you're referencing** with full IDs
+- Include emotion scores and cite multiple emotions per speaker when relevant
+- Highlight emotional patterns, trends, and important insights from Hume AI data
 - Pay attention to speaker labels: "CALLER" and "AGENT" indicate high-confidence speaker identification, while "Speaker A" and "Speaker B" indicate uncertain speaker identification
 - When speaker identification has low confidence, note this uncertainty in your answer
-- Keep your answer concise but informative"""
+- Structure complex answers clearly with sections/headers when appropriate
+- Keep answers informative and detailed, especially regarding emotions"""
 
         user_prompt = f"""Based on the following conversation excerpts (including Hume AI emotion analysis), please answer this question:
 
@@ -512,7 +516,12 @@ Question: {query}
 Context:
 {context_text}
 
-Please provide a clear, well-structured answer that leverages both the conversation text and the emotion analysis data."""
+Please provide a clear, well-structured answer that:
+1. Leverages BOTH conversation text AND Hume AI emotion analysis extensively
+2. Cites specific emotions with names and scores (e.g., "CALLER showed Contempt (0.82), Determination (0.74)")
+3. Uses COMPLETE conversation IDs without abbreviation (never use "..." or ellipsis in IDs)
+4. Explains emotional patterns and what they reveal about the interactions
+5. Provides actionable insights based on the emotion data"""
 
         print(f"[SYNTHESIZE] Calling GPT-5 with model={model}")
         try:
