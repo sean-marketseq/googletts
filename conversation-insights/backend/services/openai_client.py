@@ -403,7 +403,7 @@ Query: """
                 "description": f"Error: {str(e)}"
             }
 
-    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5-2025-08-07") -> str:
+    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-4o") -> str:
         """
         Use GPT to synthesize an answer from retrieved chunks with emotion data
 
@@ -523,7 +523,7 @@ Please provide a clear, well-structured answer that:
 4. Explains emotional patterns and what they reveal about the interactions
 5. Provides actionable insights based on the emotion data"""
 
-        print(f"[SYNTHESIZE] Calling GPT-5 with model={model}")
+        print(f"[SYNTHESIZE] Calling GPT with model={model}")
         try:
             response = self.client.chat.completions.create(
                 model=model,
@@ -531,41 +531,41 @@ Please provide a clear, well-structured answer that:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                # GPT-5 uses reasoning tokens (like o1) - need much higher limit
+                # GPT-4o has strong reasoning capabilities - use high token limit
                 # to allow for both reasoning AND the actual answer text
                 # For complex queries, reasoning can use 8000+ tokens alone
                 max_completion_tokens=16000
             )
 
             # Debug: Print full response structure
-            print(f"[GPT-5 DEBUG] Response type: {type(response)}")
-            print(f"[GPT-5 DEBUG] Response model: {response.model if hasattr(response, 'model') else 'N/A'}")
-            print(f"[GPT-5 DEBUG] Choices count: {len(response.choices) if hasattr(response, 'choices') else 0}")
+            print(f"[GPT DEBUG] Response type: {type(response)}")
+            print(f"[GPT DEBUG] Response model: {response.model if hasattr(response, 'model') else 'N/A'}")
+            print(f"[GPT DEBUG] Choices count: {len(response.choices) if hasattr(response, 'choices') else 0}")
 
             if response.choices:
                 choice = response.choices[0]
-                print(f"[GPT-5 DEBUG] Finish reason: {choice.finish_reason}")
-                print(f"[GPT-5 DEBUG] Message type: {type(choice.message)}")
-                print(f"[GPT-5 DEBUG] Has content attr: {hasattr(choice.message, 'content')}")
-                print(f"[GPT-5 DEBUG] Message content: {choice.message.content}")
-                print(f"[GPT-5 DEBUG] Message content type: {type(choice.message.content)}")
+                print(f"[GPT DEBUG] Finish reason: {choice.finish_reason}")
+                print(f"[GPT DEBUG] Message type: {type(choice.message)}")
+                print(f"[GPT DEBUG] Has content attr: {hasattr(choice.message, 'content')}")
+                print(f"[GPT DEBUG] Message content: {choice.message.content}")
+                print(f"[GPT DEBUG] Message content type: {type(choice.message.content)}")
 
             answer = response.choices[0].message.content
 
             # Debug: Check if answer is None or empty
             if not answer:
-                print(f"WARNING: GPT-5 returned empty/None answer")
-                print(f"[GPT-5 DEBUG] Full response object: {response}")
-                print(f"[GPT-5 DEBUG] Context length: {len(context_text)} chars")
-                print(f"[GPT-5 DEBUG] Query length: {len(query)} chars")
+                print(f"WARNING: GPT returned empty/None answer")
+                print(f"[GPT DEBUG] Full response object: {response}")
+                print(f"[GPT DEBUG] Context length: {len(context_text)} chars")
+                print(f"[GPT DEBUG] Query length: {len(query)} chars")
                 return "Unable to generate answer - model returned empty response."
 
             return answer
 
         except Exception as e:
             print(f"ERROR in synthesize_answer: {e}")
-            print(f"[GPT-5 DEBUG] Context length: {len(context_text)} chars")
-            print(f"[GPT-5 DEBUG] Query length: {len(query)} chars")
+            print(f"[GPT DEBUG] Context length: {len(context_text)} chars")
+            print(f"[GPT DEBUG] Query length: {len(query)} chars")
             import traceback
             traceback.print_exc()
             return f"Unable to generate answer - error: {str(e)}"
