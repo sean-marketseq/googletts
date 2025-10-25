@@ -18,7 +18,11 @@ class OpenAIBatchClient:
         Args:
             api_key: OpenAI API key (defaults to OPENAI_API_KEY env var)
         """
-        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
+        # Set a longer timeout for GPT-5 reasoning models (can take 60-120s)
+        self.client = OpenAI(
+            api_key=api_key or os.getenv("OPENAI_API_KEY"),
+            timeout=180.0  # 3 minutes timeout for reasoning models
+        )
 
     def submit_batch(self, requests: List[Dict[str, Any]], endpoint: str = "/v1/embeddings") -> str:
         """
@@ -531,7 +535,12 @@ Please provide a clear, well-structured answer that:
 {user_prompt}"""
 
         print(f"[SYNTHESIZE] Calling GPT-5 with model={model}")
+        print(f"[SYNTHESIZE] Combined prompt length: {len(combined_prompt)} chars")
+
         try:
+            import time
+            start_time = time.time()
+
             response = self.client.chat.completions.create(
                 model=model,
                 messages=[
@@ -542,6 +551,9 @@ Please provide a clear, well-structured answer that:
                 # For complex queries, reasoning can use 8000+ tokens alone
                 max_completion_tokens=16000
             )
+
+            elapsed = time.time() - start_time
+            print(f"[SYNTHESIZE] GPT-5 response received in {elapsed:.2f}s")
 
             # Debug: Print full response structure
             print(f"[GPT-5 DEBUG] Response type: {type(response)}")
@@ -569,12 +581,24 @@ Please provide a clear, well-structured answer that:
             return answer
 
         except Exception as e:
-            print(f"ERROR in synthesize_answer: {e}")
+            import traceback
+            error_type = type(e).__name__
+            print(f"ERROR in synthesize_answer ({error_type}): {e}")
             print(f"[GPT-5 DEBUG] Context length: {len(context_text)} chars")
             print(f"[GPT-5 DEBUG] Query length: {len(query)} chars")
-            import traceback
+            print(f"[GPT-5 DEBUG] Combined prompt length: {len(combined_prompt)} chars")
+            print(f"[GPT-5 DEBUG] Full traceback:")
             traceback.print_exc()
-            return f"Unable to generate answer - error: {str(e)}"
+
+            # Provide specific error messages for common issues
+            if "timeout" in str(e).lower():
+                return f"GPT-5 request timed out after 180 seconds. The query may be too complex. Error: {str(e)}"
+            elif "rate_limit" in str(e).lower():
+                return f"OpenAI rate limit exceeded. Please try again in a moment. Error: {str(e)}"
+            elif "invalid_request" in str(e).lower():
+                return f"Invalid request to GPT-5 API. Error: {str(e)}"
+            else:
+                return f"Unable to generate answer - {error_type}: {str(e)}"
 
     def transcribe_audio(self, audio_file: BinaryIO, filename: str) -> str:
         """
