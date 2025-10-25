@@ -523,13 +523,19 @@ Please provide a clear, well-structured answer that:
 4. Explains emotional patterns and what they reveal about the interactions
 5. Provides actionable insights based on the emotion data"""
 
+        # Combine system prompt and user prompt for GPT-5 (reasoning models don't support system messages)
+        combined_prompt = f"""{system_prompt}
+
+---
+
+{user_prompt}"""
+
         print(f"[SYNTHESIZE] Calling GPT-5 with model={model}")
         try:
             response = self.client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "user", "content": combined_prompt}
                 ],
                 # GPT-5 uses reasoning tokens (like o1) - need much higher limit
                 # to allow for both reasoning AND the actual answer text
