@@ -228,6 +228,57 @@ class PineconeClient:
 
         return list(conversations.values())
 
+    def audit_conversations(self, namespace: str = "conversations") -> Dict[str, Any]:
+        """
+        Audit the Pinecone database to get ground truth about stored conversations
+
+        Returns exact count and list of all conversation IDs actually stored
+
+        Args:
+            namespace: Pinecone namespace
+
+        Returns:
+            Dictionary with total count and list of conversation IDs
+        """
+        if not self.index:
+            raise ValueError("Index not initialized. Call setup_index() first.")
+
+        # Get index stats for total vector count
+        stats = self.index.describe_index_stats()
+        total_vectors = stats.get('namespaces', {}).get(namespace, {}).get('vector_count', 0)
+
+        print(f"[AUDIT] Total vectors in '{namespace}' namespace: {total_vectors}")
+
+        # Query with dummy vector and very high top_k to get ALL chunks
+        dummy_vector = [0.0] * 1536
+
+        results = self.index.query(
+            vector=dummy_vector,
+            top_k=10000,  # High limit to ensure we get everything
+            namespace=namespace,
+            include_metadata=True
+        )
+
+        print(f"[AUDIT] Retrieved {len(results.matches)} chunks")
+
+        # Extract unique conversation IDs and count chunks per conversation
+        conversation_chunks = {}
+        for match in results.matches:
+            conv_id = match.metadata.get("conversation_id")
+            if conv_id:
+                conversation_chunks[conv_id] = conversation_chunks.get(conv_id, 0) + 1
+
+        conversation_ids = sorted(list(conversation_chunks.keys()))
+
+        print(f"[AUDIT] Found {len(conversation_ids)} unique conversations")
+
+        return {
+            "total_vectors": total_vectors,
+            "total_conversations": len(conversation_ids),
+            "conversation_ids": conversation_ids,
+            "chunks_per_conversation": conversation_chunks
+        }
+
     def delete_conversation(self, conversation_id: str, namespace: str = "conversations"):
         """
         Delete all chunks for a specific conversation

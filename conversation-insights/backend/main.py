@@ -1225,6 +1225,21 @@ async def get_all_batches():
     }
 
 
+@app.get("/audit/pinecone")
+async def audit_pinecone():
+    """
+    Audit Pinecone database to get ground truth about stored conversations
+
+    Returns the actual count and list of all conversation IDs in the database
+    """
+    try:
+        audit_result = pinecone_client.audit_conversations(namespace="conversations")
+        return audit_result
+    except Exception as e:
+        print(f"Error during Pinecone audit: {e}")
+        raise HTTPException(status_code=500, detail=f"Audit failed: {str(e)}")
+
+
 @app.get("/debug/emotions")
 async def debug_emotions():
     """
