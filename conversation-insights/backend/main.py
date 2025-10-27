@@ -973,6 +973,35 @@ async def query_conversations(request: QueryRequest):
 
         print(f"Processing query: {request.query}")
 
+        # Step 0: Detect if this is a count/list query (not semantic)
+        query_lower = request.query.lower()
+        is_count_query = any(phrase in query_lower for phrase in [
+            "how many conversation",
+            "how many calls",
+            "count",
+            "list all conversation",
+            "show all conversation",
+            "total conversation",
+            "number of conversation"
+        ])
+
+        if is_count_query:
+            print("[COUNT QUERY DETECTED] Using audit endpoint for accurate count")
+            audit_result = pinecone_client.audit_conversations(namespace="conversations")
+
+            answer = f"""Number of conversations in the database: {audit_result['total_conversations']}
+
+Conversation IDs (complete):
+{chr(10).join(f"- {conv_id}" for conv_id in audit_result['conversation_ids'])}
+
+Note: Each conversation is stored as {audit_result['total_vectors']} total chunks in the vector database."""
+
+            return QueryResponse(
+                answer=answer,
+                sources=[],
+                processing_time_ms=(time.time() - start_time) * 1000
+            )
+
         # Step 1: Extract emotion intent
         emotion_intent = openai_client.extract_emotion_intent(request.query)
         print(f"Emotion intent: {emotion_intent}")
