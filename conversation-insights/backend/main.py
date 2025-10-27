@@ -1,5 +1,6 @@
 """
 FastAPI application for Conversation Insights Pipeline
+Updated: 2025-10-27 - Force redeploy with latest code
 """
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
