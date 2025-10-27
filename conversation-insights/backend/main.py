@@ -191,7 +191,12 @@ async def upload_audio(
     6. Submit to OpenAI Batch API
     7. Store all job IDs and return immediately
     """
+    upload_start_time = None
+    generated_conv_id = None
+
     try:
+        import time as time_module
+        upload_start_time = time_module.time()
         # Validate file type
         allowed_extensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm']
         file_ext = os.path.splitext(file.filename)[1].lower()
@@ -231,6 +236,18 @@ async def upload_audio(
                 conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
                 print(f"Filename pattern not recognized, generated conversation_id: {conversation_id}")
 
+        generated_conv_id = conversation_id
+
+        # Track upload attempt immediately
+        upload_id = f"upload_{conversation_id}"
+        batch_storage[upload_id] = {
+            "conversation_id": conversation_id,
+            "status": "processing",
+            "filename": file.filename,
+            "upload_start_time": upload_start_time,
+            "step": "init"
+        }
+
         print(f"Processing audio file: {file.filename} for conversation: {conversation_id}")
 
         # Read audio content
@@ -238,6 +255,7 @@ async def upload_audio(
 
         # === STEP 1: Transcribe with diarization ===
         try:
+            batch_storage[upload_id]["step"] = "transcribing"
             diarization = openai_client.transcribe_audio_with_diarization(
                 io.BytesIO(audio_content),
                 file.filename
@@ -247,6 +265,7 @@ async def upload_audio(
             )
         except Exception as e:
             print(f"Error during transcription: {e}")
+            batch_storage[upload_id]["step"] = "transcription_failed"
             traceback.print_exc()
             raise HTTPException(
                 status_code=500,
@@ -292,6 +311,7 @@ async def upload_audio(
         # === STEP 2: Submit to Hume (with error handling) ===
         hume_job_id = None
         try:
+            batch_storage[upload_id]["step"] = "submitting_to_hume"
             hume_callback_url = os.getenv("HUME_CALLBACK_URL")
             hume_job_id = hume_client.submit_audio(
                 io.BytesIO(audio_content),
@@ -301,6 +321,7 @@ async def upload_audio(
             print(f"Hume job submitted: {hume_job_id}")
         except Exception as e:
             print(f"Warning: Hume submission failed: {e}")
+            batch_storage[upload_id]["step"] = "hume_failed_continuing"
             print("Continuing with OpenAI processing only...")
 
         # === STEP 3: Chunk transcript ===
@@ -329,12 +350,14 @@ async def upload_audio(
 
         # === STEP 5: Create embeddings directly (no batch, much faster!) ===
         try:
+            batch_storage[upload_id]["step"] = "creating_embeddings"
             chunk_texts = [chunk["text"] for chunk in chunks]
             print(f"Creating embeddings for {len(chunk_texts)} chunks...")
             embeddings = openai_client.create_embeddings_batch(chunk_texts)
             print(f"Embeddings created successfully")
         except Exception as e:
             print(f"Error creating embeddings: {e}")
+            batch_storage[upload_id]["step"] = "embeddings_failed"
             traceback.print_exc()
             raise HTTPException(
                 status_code=500,
@@ -343,6 +366,7 @@ async def upload_audio(
 
         # === STEP 6: Build Pinecone records and upsert immediately ===
         try:
+            batch_storage[upload_id]["step"] = "upserting_to_pinecone"
             print(f"Building Pinecone records for {len(chunks)} chunks...")
 
             # Build conversation records
@@ -385,6 +409,7 @@ async def upload_audio(
 
         except Exception as e:
             print(f"Error upserting to Pinecone: {e}")
+            batch_storage[upload_id]["step"] = "pinecone_failed"
             traceback.print_exc()
             raise HTTPException(
                 status_code=500,
@@ -392,10 +417,9 @@ async def upload_audio(
             )
 
         # === STEP 7: Store for Hume webhook processing ===
-        # Generate a tracking ID for this upload
-        upload_id = f"upload_{conversation_id}"
-
-        batch_storage[upload_id] = {
+        # Update tracking info (upload_id already created at start)
+        batch_storage[upload_id]["step"] = "completed"
+        batch_storage[upload_id].update({
             "conversation_id": conversation_id,
             "status": "processing_emotions" if hume_job_id else "completed",
             "chunks": chunks,
@@ -423,7 +447,18 @@ async def upload_audio(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error processing audio: {e}")
+        # Track upload failure
+        if generated_conv_id:
+            upload_id = f"upload_{generated_conv_id}"
+            if upload_id in batch_storage:
+                batch_storage[upload_id]["status"] = "failed"
+                batch_storage[upload_id]["error"] = str(e)
+                batch_storage[upload_id]["error_traceback"] = traceback.format_exc()
+                if upload_start_time:
+                    batch_storage[upload_id]["failed_at"] = time_module.time()
+                    batch_storage[upload_id]["duration_seconds"] = time_module.time() - upload_start_time
+
+        print(f"[UPLOAD FAILED] File: {file.filename}, Error: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to process audio: {str(e)}")
 
@@ -1282,6 +1317,86 @@ async def audit_pinecone():
     except Exception as e:
         print(f"Error during Pinecone audit: {e}")
         raise HTTPException(status_code=500, detail=f"Audit failed: {str(e)}")
+
+
+@app.get("/audit/uploads")
+async def audit_uploads():
+    """
+    Audit upload attempts vs successful uploads
+
+    Returns:
+    - Total upload attempts tracked
+    - Successful uploads (in Pinecone)
+    - Failed uploads (tracked but not in Pinecone)
+    - Missing files details
+    """
+    try:
+        # Get all conversations from Pinecone
+        pinecone_audit = pinecone_client.audit_conversations(namespace="conversations")
+        successful_conv_ids = set(pinecone_audit['conversations_namespace']['conversation_ids'])
+
+        # Get all upload attempts from batch_storage
+        upload_attempts = {}
+        for batch_id, info in batch_storage.items():
+            if batch_id.startswith("upload_"):
+                conv_id = info.get("conversation_id")
+                upload_attempts[conv_id] = {
+                    "conversation_id": conv_id,
+                    "filename": info.get("filename", "unknown"),
+                    "status": info.get("status", "unknown"),
+                    "step": info.get("step", "unknown"),
+                    "upload_start_time": info.get("upload_start_time"),
+                    "stored_in_pinecone": conv_id in successful_conv_ids
+                }
+
+                # Add error info if failed
+                if info.get("error"):
+                    upload_attempts[conv_id]["error"] = info.get("error")
+                    upload_attempts[conv_id]["failed_at"] = info.get("failed_at")
+                    upload_attempts[conv_id]["duration_seconds"] = info.get("duration_seconds")
+
+        # Identify failures
+        attempted_ids = set(upload_attempts.keys())
+        failed_ids = attempted_ids - successful_conv_ids
+        orphaned_ids = successful_conv_ids - attempted_ids  # In Pinecone but not tracked (from before tracking)
+
+        # Build failure details
+        failed_uploads = []
+        for conv_id in failed_ids:
+            failed_uploads.append(upload_attempts[conv_id])
+
+        # Build success details
+        successful_uploads = []
+        for conv_id in attempted_ids:
+            if conv_id in successful_conv_ids:
+                successful_uploads.append({
+                    "conversation_id": conv_id,
+                    "filename": upload_attempts[conv_id].get("filename"),
+                    "status": upload_attempts[conv_id].get("status")
+                })
+
+        return {
+            "summary": {
+                "total_upload_attempts": len(upload_attempts),
+                "successful_uploads": len(successful_uploads),
+                "failed_uploads": len(failed_uploads),
+                "orphaned_conversations": len(orphaned_ids),
+                "total_in_pinecone": len(successful_conv_ids)
+            },
+            "successful_uploads": successful_uploads,
+            "failed_uploads": failed_uploads,
+            "orphaned_conversation_ids": sorted(list(orphaned_ids)),
+            "details": {
+                "attempted_conversation_ids": sorted(list(attempted_ids)),
+                "pinecone_conversation_ids": sorted(list(successful_conv_ids)),
+                "missing_conversation_ids": sorted(list(failed_ids))
+            }
+        }
+
+    except Exception as e:
+        print(f"Error during upload audit: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Upload audit failed: {str(e)}")
 
 
 @app.get("/debug/emotions")
