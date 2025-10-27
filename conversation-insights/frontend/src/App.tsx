@@ -752,6 +752,40 @@ function App() {
               Ask questions about your indexed conversations
             </p>
 
+            {/* Quick Queries */}
+            <div className="mb-6 p-4 bg-white/5 rounded-xl border border-white/10">
+              <p className="text-purple-200 text-xs mb-3 font-semibold">Quick Queries:</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setQuery("Analyze calls with transfers to human agents.\n\nFORMAT: Surgical, concise analysis. Maximum 20 lines total.\n\n## Top Transfer Causes (3-5 themes with counts)\nFor each theme:\n- Reason + frequency\n- Key Hume emotions (e.g., Contempt 0.82, Determination 0.74)\n- Example conversation: FULL ID (never abbreviate like conv_xxx...)\n- One actionable fix\n\n## Key Insights\n- Most critical pattern\n- Emotion escalation to watch\n- Immediate action item\n\nRULES:\n- Use COMPLETE conversation IDs (e.g., conv_7001k892nvqyf0hvbgwq3ysyf5fx)\n- Cite Hume emotions with scores\n- Be surgical - facts only, no fluff")}
+                  className="px-3 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs rounded-lg
+                    hover:from-purple-600 hover:to-pink-600 transition-all duration-200
+                    transform hover:scale-105 font-medium shadow-md"
+                >
+                  Transfer Analysis
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuery("What are the top frustration patterns across all customers?\n\nANALYSIS REQUIREMENTS:\n1. Top 3-5 frustration themes/root causes (with frequency/prevalence)\n2. Cross-conversation patterns: What trends emerge?\n3. For each theme, cite 2-3 examples: conversation ID + emotion (e.g., conv_xxx: Frustration 0.85)\n4. Root cause deduction: WHY are customers frustrated?\n5. Impact assessment: Which issue is most critical?\n6. Actionable insight: What should we fix first?\n\nFORMAT:\n- Start with meta-conclusions, support with data\n- Maximum 15 lines\n- Bullet points only\n- No explanations, just findings and recommendations")}
+                  className="px-3 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-xs rounded-lg
+                    hover:from-blue-600 hover:to-cyan-600 transition-all duration-200
+                    transform hover:scale-105 font-medium shadow-md"
+                >
+                  Top Frustrations
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQuery("Identify positive customer interactions with high satisfaction\n\nFORMAT: Concise bullet points only. Maximum 10 lines.\n- List top 3-5 positive interactions\n- Include conversation ID + key emotion (e.g., conv_xxx: Satisfaction 0.92)\n- One line per interaction\n- No explanations, just facts")}
+                  className="px-3 py-2 bg-gradient-to-r from-green-500 to-teal-500 text-white text-xs rounded-lg
+                    hover:from-green-600 hover:to-teal-600 transition-all duration-200
+                    transform hover:scale-105 font-medium shadow-md"
+                >
+                  Positive Calls
+                </button>
+              </div>
+            </div>
+
             <form onSubmit={handleQuery} className="space-y-6">
               <div>
                 <label className="block text-sm font-semibold text-purple-200 mb-3">
