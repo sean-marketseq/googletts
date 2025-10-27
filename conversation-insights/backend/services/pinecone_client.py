@@ -250,7 +250,8 @@ class PineconeClient:
         print(f"[AUDIT] Total vectors in '{namespace}' namespace: {total_vectors}")
 
         # Query with dummy vector and very high top_k to get ALL chunks
-        dummy_vector = [0.0] * 1536
+        # Use 1024 dimensions to match text-embedding-3-small
+        dummy_vector = [0.0] * 1024
 
         results = self.index.query(
             vector=dummy_vector,
