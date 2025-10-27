@@ -231,6 +231,7 @@ class PineconeClient:
     def audit_conversations(self, namespace: str = "conversations") -> Dict[str, Any]:
         """
         Audit the Pinecone database to get ground truth about stored conversations
+        Also checks emotions namespace to verify emotion data alignment
 
         Returns exact count and list of all conversation IDs actually stored
 
@@ -238,12 +239,12 @@ class PineconeClient:
             namespace: Pinecone namespace
 
         Returns:
-            Dictionary with total count and list of conversation IDs
+            Dictionary with total count, conversation IDs, and emotion alignment info
         """
         if not self.index:
             raise ValueError("Index not initialized. Call setup_index() first.")
 
-        # Get index stats for total vector count
+        # === AUDIT CONVERSATIONS NAMESPACE ===
         stats = self.index.describe_index_stats()
         total_vectors = stats.get('namespaces', {}).get(namespace, {}).get('vector_count', 0)
 
@@ -260,7 +261,7 @@ class PineconeClient:
             include_metadata=True
         )
 
-        print(f"[AUDIT] Retrieved {len(results.matches)} chunks")
+        print(f"[AUDIT] Retrieved {len(results.matches)} chunks from conversations")
 
         # Extract unique conversation IDs and count chunks per conversation
         conversation_chunks = {}
@@ -270,14 +271,74 @@ class PineconeClient:
                 conversation_chunks[conv_id] = conversation_chunks.get(conv_id, 0) + 1
 
         conversation_ids = sorted(list(conversation_chunks.keys()))
-
         print(f"[AUDIT] Found {len(conversation_ids)} unique conversations")
 
+        # === AUDIT EMOTIONS NAMESPACE ===
+        emotions_data = {
+            "total_vectors": 0,
+            "conversation_ids": [],
+            "has_emotion_data": []
+        }
+
+        try:
+            if not self.emotion_index:
+                self.setup_emotion_index(dimension=192)
+
+            emotion_stats = self.emotion_index.describe_index_stats()
+            emotions_data["total_vectors"] = emotion_stats.get('namespaces', {}).get('emotions', {}).get('vector_count', 0)
+
+            print(f"[AUDIT] Total vectors in 'emotions' namespace: {emotions_data['total_vectors']}")
+
+            # Query emotions index with 192-dimension dummy vector
+            emotion_dummy = [0.0] * 192
+            emotion_results = self.emotion_index.query(
+                vector=emotion_dummy,
+                top_k=10000,
+                namespace="emotions",
+                include_metadata=True
+            )
+
+            print(f"[AUDIT] Retrieved {len(emotion_results.matches)} emotion vectors")
+
+            # Extract conversation IDs that have emotion data
+            emotion_conv_ids = set()
+            for match in emotion_results.matches:
+                conv_id = match.metadata.get("conversation_id")
+                if conv_id:
+                    emotion_conv_ids.add(conv_id)
+
+            emotions_data["conversation_ids"] = sorted(list(emotion_conv_ids))
+            emotions_data["has_emotion_data"] = list(emotion_conv_ids)
+            print(f"[AUDIT] Found {len(emotion_conv_ids)} conversations with emotion data")
+
+        except Exception as e:
+            print(f"[AUDIT] Warning: Could not audit emotions namespace: {e}")
+            emotions_data["error"] = str(e)
+
+        # === COMPARE AND FIND DISCREPANCIES ===
+        missing_emotions = []
+        if emotions_data.get("has_emotion_data"):
+            emotion_set = set(emotions_data["has_emotion_data"])
+            missing_emotions = [conv_id for conv_id in conversation_ids if conv_id not in emotion_set]
+
         return {
-            "total_vectors": total_vectors,
-            "total_conversations": len(conversation_ids),
-            "conversation_ids": conversation_ids,
-            "chunks_per_conversation": conversation_chunks
+            "conversations_namespace": {
+                "total_vectors": total_vectors,
+                "total_conversations": len(conversation_ids),
+                "conversation_ids": conversation_ids,
+                "chunks_per_conversation": conversation_chunks
+            },
+            "emotions_namespace": {
+                "total_vectors": emotions_data["total_vectors"],
+                "total_conversations": len(emotions_data.get("has_emotion_data", [])),
+                "conversation_ids": emotions_data.get("conversation_ids", [])
+            },
+            "alignment": {
+                "conversations_with_emotions": len(emotions_data.get("has_emotion_data", [])),
+                "conversations_without_emotions": len(missing_emotions),
+                "missing_emotion_data": missing_emotions,
+                "all_aligned": len(missing_emotions) == 0
+            }
         }
 
     def delete_conversation(self, conversation_id: str, namespace: str = "conversations"):

@@ -989,12 +989,27 @@ async def query_conversations(request: QueryRequest):
             print("[COUNT QUERY DETECTED] Using audit endpoint for accurate count")
             audit_result = pinecone_client.audit_conversations(namespace="conversations")
 
-            answer = f"""Number of conversations in the database: {audit_result['total_conversations']}
+            # Build answer with emotion alignment info
+            conv_data = audit_result['conversations_namespace']
+            emotion_data = audit_result['emotions_namespace']
+            alignment = audit_result['alignment']
+
+            answer = f"""Number of conversations in the database: {conv_data['total_conversations']}
+
+Emotion data coverage: {alignment['conversations_with_emotions']}/{conv_data['total_conversations']} conversations have emotion analysis
 
 Conversation IDs (complete):
-{chr(10).join(f"- {conv_id}" for conv_id in audit_result['conversation_ids'])}
+{chr(10).join(f"- {conv_id}" for conv_id in conv_data['conversation_ids'])}
 
-Note: Each conversation is stored as {audit_result['total_vectors']} total chunks in the vector database."""
+Storage details:
+- Total conversation chunks: {conv_data['total_vectors']}
+- Total emotion vectors: {emotion_data['total_vectors']}
+- All emotions aligned: {'✓ Yes' if alignment['all_aligned'] else '✗ No'}"""
+
+            if not alignment['all_aligned']:
+                answer += f"\n- Conversations missing emotion data ({len(alignment['missing_emotion_data'])}): {', '.join(alignment['missing_emotion_data'][:5])}"
+                if len(alignment['missing_emotion_data']) > 5:
+                    answer += f" ...and {len(alignment['missing_emotion_data']) - 5} more"
 
             return QueryResponse(
                 answer=answer,
