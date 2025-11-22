@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 import json
 import os
 from dotenv import load_dotenv
+import random
 
 from services.processor import chunk_text, create_batch_requests, parse_batch_results
 from services.openai_client import OpenAIBatchClient
@@ -19,6 +20,10 @@ import traceback
 
 # Load environment variables
 load_dotenv()
+
+# Hume sampling rate (0.0 to 1.0) - default 10% to reduce costs
+HUME_SAMPLING_RATE = float(os.getenv("HUME_SAMPLING_RATE", "0.1"))
+print(f"[CONFIG] Hume sampling rate: {HUME_SAMPLING_RATE * 100}%")
 
 # Initialize FastAPI app
 app = FastAPI(title="Conversation Insights API")
@@ -259,19 +264,24 @@ async def upload_audio(
 
         print(f"Speaker labeling: {speaker_labels} (confidence: {labeling_confidence})")
 
-        # === STEP 2: Submit to Hume (with error handling) ===
+        # === STEP 2: Submit to Hume (with random sampling for cost reduction) ===
         hume_job_id = None
-        try:
-            hume_callback_url = os.getenv("HUME_CALLBACK_URL")
-            hume_job_id = hume_client.submit_audio(
-                io.BytesIO(audio_content),
-                file.filename,
-                callback_url=hume_callback_url
-            )
-            print(f"Hume job submitted: {hume_job_id}")
-        except Exception as e:
-            print(f"Warning: Hume submission failed: {e}")
-            print("Continuing with OpenAI processing only...")
+        use_hume = random.random() < HUME_SAMPLING_RATE
+
+        if use_hume:
+            try:
+                hume_callback_url = os.getenv("HUME_CALLBACK_URL")
+                hume_job_id = hume_client.submit_audio(
+                    io.BytesIO(audio_content),
+                    file.filename,
+                    callback_url=hume_callback_url
+                )
+                print(f"[HUME] Job submitted: {hume_job_id} (sampled: {HUME_SAMPLING_RATE * 100}%)")
+            except Exception as e:
+                print(f"[HUME] Warning: Submission failed: {e}")
+                print("Continuing with OpenAI processing only...")
+        else:
+            print(f"[HUME] Skipped for cost savings (sampling rate: {HUME_SAMPLING_RATE * 100}%)")
 
         # === STEP 3: Chunk transcript ===
         transcript = diarization["full_transcript"]
