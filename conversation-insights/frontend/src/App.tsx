@@ -397,6 +397,33 @@ function App() {
     }
   };
 
+  // Handle pre-built query
+  const handlePrebuiltQuery = (prebuiltQuery: string) => {
+    setQuery(prebuiltQuery);
+    setQueryError('');
+    setQueryResult(null);
+
+    // Auto-submit the query
+    setTimeout(async () => {
+      setIsQuerying(true);
+      setQueryError('');
+
+      try {
+        const response = await conversationApi.query({
+          query: prebuiltQuery.trim(),
+          top_k: 50
+        });
+
+        setQueryResult(response);
+      } catch (error: any) {
+        console.error('Query error:', error);
+        setQueryError(error.response?.data?.detail || 'Failed to process query');
+      } finally {
+        setIsQuerying(false);
+      }
+    }, 100);
+  };
+
   // Toggle details expansion
   const toggleDetails = (fileId: string) => {
     setExpandedDetails(prev => {
@@ -767,9 +794,68 @@ function App() {
             </p>
 
             <form onSubmit={handleQuery} className="space-y-6">
-              <div>
+              {/* Pre-built Queries */}
+              <div className="space-y-3">
                 <label className="block text-sm font-semibold text-purple-200 mb-3">
-                  Your Question
+                  Quick Insights
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handlePrebuiltQuery("What are the top frustration points causing negative emotions in customer calls? Analyze the conversation patterns, common complaints, and emotional triggers.")}
+                    disabled={isQuerying}
+                    className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      <svg className="w-5 h-5 text-red-400 group-hover:text-red-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-purple-100 mb-1">Top Customer Frustrations</div>
+                      <div className="text-xs text-purple-300">Identify negative emotion triggers and complaint patterns</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handlePrebuiltQuery("Show me examples where agents successfully de-escalated high-emotion situations. What communication techniques and approaches worked best?")}
+                    disabled={isQuerying}
+                    className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      <svg className="w-5 h-5 text-green-400 group-hover:text-green-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-purple-100 mb-1">Successful De-escalations</div>
+                      <div className="text-xs text-purple-300">Learn from agents who effectively calmed upset customers</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handlePrebuiltQuery("What issues, topics, or service problems correlate with customers expressing intent to cancel or showing high dissatisfaction? Include emotional context.")}
+                    disabled={isQuerying}
+                    className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      <svg className="w-5 h-5 text-yellow-400 group-hover:text-yellow-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-purple-100 mb-1">Churn Risk Indicators</div>
+                      <div className="text-xs text-purple-300">Discover patterns in cancellation intent and dissatisfaction</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <label className="block text-sm font-semibold text-purple-200 mb-3">
+                  Or Ask Your Own Question
                 </label>
                 <textarea
                   value={query}
