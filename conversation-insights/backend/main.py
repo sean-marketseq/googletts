@@ -764,22 +764,33 @@ async def query_conversations(request: QueryRequest):
         print(f"Processing query: {request.query}")
 
         # Step 1: Create query embedding
-        query_embedding = openai_client.create_embedding(request.query)
+        try:
+            print(f"Creating embedding for query...")
+            query_embedding = openai_client.create_embedding(request.query)
+            print(f"Embedding created: {len(query_embedding)} dimensions")
+        except Exception as e:
+            print(f"ERROR: Failed to create embedding: {type(e).__name__}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
 
         # Step 2: Search Pinecone
-        matches = pinecone_client.query(
-            embedding=query_embedding,
-            top_k=request.top_k,
-            filter=request.filters,
-            namespace="conversations",
-            include_metadata=True
-        )
-
-        print(f"Found {len(matches)} matches")
+        try:
+            print(f"Searching Pinecone for top {request.top_k} matches...")
+            matches = pinecone_client.query(
+                embedding=query_embedding,
+                top_k=request.top_k,
+                filter=request.filters,
+                namespace="conversations",
+                include_metadata=True
+            )
+            print(f"Found {len(matches)} matches")
+        except Exception as e:
+            print(f"ERROR: Pinecone query failed: {type(e).__name__}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
         if not matches:
+            print(f"No matches found - index might be empty")
             return QueryResponse(
-                answer="No relevant conversations found for your query.",
+                answer="No relevant conversations found for your query. Make sure files have finished processing and are stored in the index.",
                 sources=[],
                 processing_time_ms=(time.time() - start_time) * 1000
             )
@@ -789,10 +800,17 @@ async def query_conversations(request: QueryRequest):
         context_chunks = [match["metadata"] for match in top_matches]
 
         # Synthesize answer with GPT
-        answer = openai_client.synthesize_answer(
-            query=request.query,
-            context_chunks=context_chunks
-        )
+        try:
+            print(f"Synthesizing answer with GPT from {len(context_chunks)} chunks...")
+            answer = openai_client.synthesize_answer(
+                query=request.query,
+                context_chunks=context_chunks
+            )
+            print(f"Answer synthesized: {len(answer)} characters")
+        except Exception as e:
+            print(f"ERROR: GPT synthesis failed: {type(e).__name__}: {str(e)}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Answer generation failed: {str(e)}")
 
         # Format sources
         sources = []
