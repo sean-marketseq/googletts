@@ -235,12 +235,24 @@ async def upload_audio(
 
         # Read audio content
         audio_content = await file.read()
+        file_size_mb = len(audio_content) / (1024 * 1024)
+        print(f"File size: {file_size_mb:.2f} MB")
 
         # === STEP 1: Transcribe with diarization ===
-        diarization = openai_client.transcribe_audio_with_diarization(
-            io.BytesIO(audio_content),
-            file.filename
-        )
+        try:
+            print(f"Starting transcription for {file.filename}...")
+            diarization = openai_client.transcribe_audio_with_diarization(
+                io.BytesIO(audio_content),
+                file.filename
+            )
+            print(f"Transcription successful: {len(diarization.get('segments', []))} segments")
+        except Exception as e:
+            print(f"ERROR: Transcription failed for {file.filename}: {type(e).__name__}: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Transcription failed: {type(e).__name__}: {str(e)}"
+            )
+
         speaker_labels, labeling_confidence = openai_client.label_speakers_as_agent_caller(
             diarization["segments"]
         )
