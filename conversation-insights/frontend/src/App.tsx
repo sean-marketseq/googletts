@@ -877,6 +877,116 @@ function App() {
                       <div className="text-xs text-purple-300">Identify where and why conversations fail or go off-track</div>
                     </div>
                   </button>
+
+                  {/* MASTER ANALYSIS - Special highlighted button */}
+                  <button
+                    type="button"
+                    onClick={() => handlePrebuiltQuery(`You are an expert conversation analyst specializing in digital voice agent optimization.
+Analyze the provided conversation transcripts to identify failure patterns and generate precise system improvements.
+
+INPUT: [Raw conversation transcripts from Pinecone query results]
+
+REQUIRED ANALYSIS STRUCTURE:
+
+## PART 1: PATTERN IDENTIFICATION
+For each conversation, extract:
+1. Conversation ID
+2. Breakdown trigger (exact user utterance that started the failure)
+3. Bot response pattern that failed
+4. Number of turns until resolution or abandonment
+5. Final outcome (resolved/transferred/abandoned)
+
+Group conversations by failure pattern. Focus on:
+- Transfer request friction (unnecessary confirmations)
+- Order/ID reference failures (ignoring specific inputs)
+- Ambiguous input handling (vocabulary mismatch)
+- Emotional escalation points
+- Silent user recovery failures
+- Meta-request misunderstandings
+
+## PART 2: BEHAVIORAL SIGNATURES
+For each pattern group, identify:
+- Exact bot phrases that correlate with failure
+- User vocabulary that gets misinterpreted
+- Number of redundant turns before resolution
+- Specific data points that get ignored (order IDs, phone numbers)
+
+## PART 3: SYSTEM PROMPT IMPROVEMENTS
+Generate Python-formatted prompt updates for each identified pattern:
+
+Include for each pattern:
+- DETECTION_TRIGGER: Specific conditions to detect this pattern
+- CURRENT_BEHAVIOR: What the bot currently does wrong
+- CORRECTED_BEHAVIOR: Exact new response template, state management rules, forbidden phrases to eliminate
+- EXAMPLE: Show actual user quote, actual bot failure, and improved response
+- IMPLEMENTATION: Precise if/then logic with exact templates and data structures
+
+## PART 4: IMPACT METRICS
+For each improvement, estimate:
+- Transfer rate reduction (based on similar patterns that led to transfers)
+- AHT reduction (seconds saved by eliminating loops)
+- Containment improvement (% of convos that could stay automated)
+- CSAT improvement (based on friction points removed)
+
+## PART 5: IMPLEMENTATION PRIORITY
+Rank improvements by:
+1. Frequency (how often pattern occurs)
+2. Impact (how severely it affects outcomes)
+3. Implementation ease (simple prompt change vs. system change)
+
+OUTPUT FORMAT:
+
+# Conversation Analysis: Critical Breakdown Patterns & System Prompt Improvements
+
+## Pattern 1: [Name]
+**Frequency:** [X occurrences in sample]
+**Impact:** [High/Medium/Low]
+
+### Example Conversations:
+- [conv_id]: [Brief description of failure]
+- [conv_id]: [Brief description of failure]
+
+### Precise System Prompt Implementation:
+[Ready-to-deploy code block with specific prompts, rules, and templates]
+
+### Expected Impact:
+- Metric 1: [Specific improvement]
+- Metric 2: [Specific improvement]
+
+[Continue for all patterns...]
+
+## Master Control Rules:
+[Global rules that apply across all patterns in code format]
+
+## Quick Implementation Wins:
+[Top 3 changes that can be deployed immediately]
+
+ANALYSIS CONSTRAINTS:
+- Only cite actual conversation IDs and quotes from the data
+- Every improvement must reference specific transcript failures
+- Code blocks must be deployment-ready, not pseudo-code
+- Focus on patterns that appear 3+ times in the dataset
+- Prioritize fixes that eliminate entire conversation turns
+- Include EXACT response templates that can be copied directly into production
+- Specify FORBIDDEN phrases that should never appear
+- Define precise STATE management rules for data capture
+- Show BEFORE/AFTER examples using real transcript excerpts`)}
+                    disabled={isQuerying}
+                    className="flex items-start gap-3 p-4 bg-gradient-to-r from-yellow-500/10 to-amber-500/10 hover:from-yellow-500/20 hover:to-amber-500/20 border-2 border-yellow-400/40 hover:border-yellow-300/60 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group shadow-lg"
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      <svg className="w-6 h-6 text-yellow-400 group-hover:text-yellow-300 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold text-yellow-200 mb-1 flex items-center gap-2">
+                        Master System Analysis
+                        <span className="text-xs px-2 py-0.5 bg-yellow-500/30 text-yellow-200 rounded-full font-semibold">ADVANCED</span>
+                      </div>
+                      <div className="text-xs text-yellow-300/90">Complete failure pattern analysis with deployment-ready system prompt improvements</div>
+                    </div>
+                  </button>
                 </div>
               </div>
 
