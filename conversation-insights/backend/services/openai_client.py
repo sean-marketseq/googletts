@@ -6,6 +6,8 @@ from typing import List, Dict, Any, BinaryIO
 import json
 import tempfile
 from openai import OpenAI
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 
 class OpenAIBatchClient:
@@ -239,6 +241,67 @@ Conversation chunk:
                 "action_items": [],
                 "compliance_flags": []
             }
+
+    async def extract_conversation_data_async(self, text: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
+        """
+        Extract structured data from conversation chunk asynchronously
+
+        This runs the blocking OpenAI call in a thread pool to avoid blocking the event loop
+
+        Args:
+            text: Conversation text to analyze
+            model: Model to use for extraction
+
+        Returns:
+            Dictionary with intents, entities, sentiment, action_items, compliance_flags
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,  # Use default ThreadPoolExecutor
+            self.extract_conversation_data,
+            text,
+            model
+        )
+
+    async def extract_chunks_parallel(self, chunks: List[Dict[str, Any]], model: str = "gpt-4o-mini") -> List[Dict[str, Any]]:
+        """
+        Extract data from multiple chunks in parallel using asyncio
+
+        This is the KEY OPTIMIZATION for Tier 1 - processing all chunks concurrently
+        instead of sequentially
+
+        Args:
+            chunks: List of chunk dictionaries with 'text' and 'index' keys
+            model: Model to use for extraction
+
+        Returns:
+            List of extraction results with chunk_id and data
+        """
+        print(f"[PARALLEL] Extracting data from {len(chunks)} chunks in parallel...")
+
+        # Create async tasks for all chunks
+        tasks = [
+            self.extract_conversation_data_async(chunk["text"], model)
+            for chunk in chunks
+        ]
+
+        # Run all extractions in parallel
+        import time
+        start = time.time()
+        extractions = await asyncio.gather(*tasks)
+        elapsed = time.time() - start
+
+        print(f"[PARALLEL] Completed {len(chunks)} extractions in {elapsed:.2f}s ({elapsed/len(chunks):.2f}s per chunk)")
+
+        # Format results
+        results = []
+        for i, chunk in enumerate(chunks):
+            results.append({
+                "chunk_id": f"chunk_{chunk['index']}",
+                "data": extractions[i]
+            })
+
+        return results
 
     def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5.1") -> str:
         """

@@ -278,16 +278,29 @@ async def upload_audio(
         chunks = chunk_text(transcript, max_tokens=1500, overlap=200)
         print(f"Created {len(chunks)} chunks")
 
-        # === STEP 4: Extract data from chunks synchronously (FAST - direct API calls) ===
-        print(f"Extracting data from {len(chunks)} chunks...")
-        extraction_results = []
-        for chunk in chunks:
-            extracted = openai_client.extract_conversation_data(chunk["text"])
-            extraction_results.append({
-                "chunk_id": f"{conversation_id}_chunk_{chunk['index']}",
-                "data": extracted
-            })
-        print(f"Extraction complete for {len(chunks)} chunks")
+        # === STEP 4: Extract data from chunks IN PARALLEL (TIER 1 OPTIMIZATION) ===
+        print(f"[OPTIMIZATION] Extracting data from {len(chunks)} chunks in parallel...")
+        try:
+            # Use new parallel extraction method
+            extraction_results = await openai_client.extract_chunks_parallel(chunks)
+
+            # Add conversation_id to each result
+            for result in extraction_results:
+                result["chunk_id"] = f"{conversation_id}_chunk_{result['chunk_id'].split('_')[-1]}"
+
+            print(f"[OPTIMIZATION] Parallel extraction complete for {len(chunks)} chunks")
+        except Exception as e:
+            print(f"ERROR: Parallel extraction failed: {type(e).__name__}: {str(e)}")
+            # Fallback to sequential if parallel fails
+            print("Falling back to sequential extraction...")
+            extraction_results = []
+            for chunk in chunks:
+                extracted = openai_client.extract_conversation_data(chunk["text"])
+                extraction_results.append({
+                    "chunk_id": f"{conversation_id}_chunk_{chunk['index']}",
+                    "data": extracted
+                })
+            print(f"Sequential extraction complete for {len(chunks)} chunks")
 
         # === STEP 5: Create embedding batch requests (only embeddings now) ===
         batch_requests = create_batch_requests(

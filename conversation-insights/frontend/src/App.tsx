@@ -67,7 +67,7 @@ interface Source {
   intents: string[];
 }
 
-const MAX_CONCURRENT_UPLOADS = 2; // Process 2 files at a time
+const MAX_CONCURRENT_UPLOADS = 20; // TIER 1 OPTIMIZATION: Increased from 2 to 20 for parallel processing
 
 function App() {
   // Upload state
