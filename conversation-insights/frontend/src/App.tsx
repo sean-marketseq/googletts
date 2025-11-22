@@ -82,6 +82,7 @@ function App() {
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [queryError, setQueryError] = useState<string>('');
   const [isQuerying, setIsQuerying] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Purge state
   const [isPurging, setIsPurging] = useState(false);
@@ -380,6 +381,19 @@ function App() {
     } finally {
       setIsPurging(false);
       setShowPurgeConfirm(false);
+    }
+  };
+
+  // Handle copy to clipboard
+  const handleCopyAnswer = async () => {
+    if (!queryResult?.answer) return;
+
+    try {
+      await navigator.clipboard.writeText(queryResult.answer);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
     }
   };
 
@@ -801,12 +815,35 @@ function App() {
                 <div className="space-y-4 animate-fadeIn">
                   {/* Answer */}
                   <div className="p-6 bg-green-500/20 border border-green-400/30 rounded-xl">
-                    <h3 className="font-bold text-green-100 mb-3 text-lg flex items-center">
-                      <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd"/>
-                      </svg>
-                      Answer
-                    </h3>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-bold text-green-100 text-lg flex items-center">
+                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd"/>
+                        </svg>
+                        Answer
+                      </h3>
+                      <button
+                        onClick={handleCopyAnswer}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-green-500/30 hover:bg-green-500/50 text-green-100 rounded-lg transition-colors text-sm font-medium"
+                        title="Copy to clipboard"
+                      >
+                        {copied ? (
+                          <>
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                            </svg>
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <p className="text-green-50 whitespace-pre-wrap leading-relaxed">
                       {queryResult.answer}
                     </p>
