@@ -240,14 +240,14 @@ Conversation chunk:
                 "compliance_flags": []
             }
 
-    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-4o") -> str:
+    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5.1") -> str:
         """
         Use GPT to synthesize an answer from retrieved chunks
 
         Args:
             query: User's question
             context_chunks: List of relevant conversation chunks
-            model: Model to use for synthesis (default: gpt-4o for reliability)
+            model: Model to use for synthesis (default: gpt-5.1)
 
         Returns:
             Synthesized answer
@@ -278,14 +278,16 @@ Please provide a clear, well-structured answer."""
 
         # Try with the specified model, fallback to gpt-4o if needed
         try:
+            # GPT-5 models may need higher token limits for reasoning
+            token_limit = 8000 if "gpt-5" in model else 4000
+
             response = self.client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_completion_tokens=4000,
-                temperature=0.7
+                max_completion_tokens=token_limit
             )
         except Exception as e:
             if model != "gpt-4o":
@@ -296,8 +298,7 @@ Please provide a clear, well-structured answer."""
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    max_completion_tokens=4000,
-                    temperature=0.7
+                    max_completion_tokens=4000
                 )
             else:
                 raise
