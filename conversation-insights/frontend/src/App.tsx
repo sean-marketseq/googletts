@@ -202,11 +202,35 @@ function App() {
 
     } catch (error: any) {
       console.error('Upload error:', error);
+
+      // Capture detailed error information
+      let errorMessage = 'Failed to upload audio file';
+
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.response?.data) {
+        errorMessage = JSON.stringify(error.response.data);
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      // Add HTTP status if available
+      if (error.response?.status) {
+        errorMessage = `[${error.response.status}] ${errorMessage}`;
+      }
+
+      console.error('Full error details for', fileStatus?.file.name, ':', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      });
+
       setFileStatuses(prev => prev.map(fs =>
         fs.id === fileId ? {
           ...fs,
           status: 'error' as const,
-          error: error.response?.data?.detail || 'Failed to upload audio file'
+          error: errorMessage
         } : fs
       ));
 
@@ -586,7 +610,10 @@ function App() {
                               <p className="text-xs text-purple-400 mt-1">ID: {fs.conversationId}</p>
                             )}
                             {fs.error && (
-                              <p className="text-xs text-red-300 mt-1">{fs.error}</p>
+                              <div className="mt-1 p-2 bg-red-500/20 border border-red-400/30 rounded">
+                                <p className="text-xs text-red-300 font-semibold">Error:</p>
+                                <p className="text-xs text-red-200 mt-1 whitespace-pre-wrap break-words">{fs.error}</p>
+                              </div>
                             )}
                           </div>
 
