@@ -878,7 +878,7 @@ function App() {
                     </div>
                   </button>
 
-                  {/* MASTER ANALYSIS - Special highlighted button */}
+                  {/* MASTER ANALYSIS - Special shimmering button */}
                   <button
                     type="button"
                     onClick={() => handlePrebuiltQuery(`You are an expert conversation analyst specializing in digital voice agent optimization.
@@ -972,19 +972,19 @@ ANALYSIS CONSTRAINTS:
 - Define precise STATE management rules for data capture
 - Show BEFORE/AFTER examples using real transcript excerpts`)}
                     disabled={isQuerying}
-                    className="flex items-start gap-3 p-4 bg-gradient-to-r from-yellow-500/10 to-amber-500/10 hover:from-yellow-500/20 hover:to-amber-500/20 border-2 border-yellow-400/40 hover:border-yellow-300/60 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group shadow-lg"
+                    className="shimmer-button flex items-start gap-3 p-4 relative overflow-hidden rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group shadow-2xl border-2 border-yellow-400/50 hover:border-yellow-300/70 hover:shadow-yellow-500/25 transform hover:scale-[1.02]"
                   >
-                    <div className="flex-shrink-0 mt-0.5">
-                      <svg className="w-6 h-6 text-yellow-400 group-hover:text-yellow-300 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                    <div className="flex-shrink-0 mt-0.5 z-10">
+                      <svg className="w-6 h-6 text-yellow-300 group-hover:text-yellow-200 drop-shadow-lg animate-pulse" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
                       </svg>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-bold text-yellow-200 mb-1 flex items-center gap-2">
+                    <div className="flex-1 min-w-0 z-10">
+                      <div className="text-sm font-bold text-yellow-100 mb-1 flex items-center gap-2 drop-shadow">
                         Master System Analysis
-                        <span className="text-xs px-2 py-0.5 bg-yellow-500/30 text-yellow-200 rounded-full font-semibold">ADVANCED</span>
+                        <span className="text-xs px-2 py-0.5 bg-yellow-400/40 text-yellow-100 rounded-full font-semibold border border-yellow-300/30">ADVANCED</span>
                       </div>
-                      <div className="text-xs text-yellow-300/90">Complete failure pattern analysis with deployment-ready system prompt improvements</div>
+                      <div className="text-xs text-yellow-200/95 drop-shadow-sm">Complete failure pattern analysis with deployment-ready system prompt improvements</div>
                     </div>
                   </button>
                 </div>
@@ -1221,6 +1221,45 @@ ANALYSIS CONSTRAINTS:
         }
         .animate-fadeIn {
           animation: fadeIn 0.5s ease-out;
+        }
+
+        /* Shimmer effect for Master Analysis button */
+        @keyframes shimmer {
+          0% {
+            background-position: -1000px 0;
+          }
+          100% {
+            background-position: 1000px 0;
+          }
+        }
+
+        .shimmer-button {
+          background: linear-gradient(
+            110deg,
+            rgba(251, 191, 36, 0.15) 0%,
+            rgba(251, 191, 36, 0.25) 25%,
+            rgba(252, 211, 77, 0.35) 35%,
+            rgba(253, 224, 71, 0.5) 45%,
+            rgba(252, 211, 77, 0.35) 55%,
+            rgba(251, 191, 36, 0.25) 65%,
+            rgba(251, 191, 36, 0.15) 100%
+          );
+          background-size: 2000px 100%;
+          animation: shimmer 3s linear infinite;
+        }
+
+        .shimmer-button:hover {
+          animation: shimmer 1.5s linear infinite;
+          background: linear-gradient(
+            110deg,
+            rgba(251, 191, 36, 0.2) 0%,
+            rgba(251, 191, 36, 0.3) 25%,
+            rgba(252, 211, 77, 0.4) 35%,
+            rgba(253, 224, 71, 0.6) 45%,
+            rgba(252, 211, 77, 0.4) 55%,
+            rgba(251, 191, 36, 0.3) 65%,
+            rgba(251, 191, 36, 0.2) 100%
+          );
         }
       `}</style>
     </div>
