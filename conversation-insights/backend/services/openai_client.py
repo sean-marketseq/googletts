@@ -240,14 +240,14 @@ Conversation chunk:
                 "compliance_flags": []
             }
 
-    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5-2025-08-07") -> str:
+    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-4o") -> str:
         """
         Use GPT to synthesize an answer from retrieved chunks
 
         Args:
             query: User's question
             context_chunks: List of relevant conversation chunks
-            model: Model to use for synthesis
+            model: Model to use for synthesis (default: gpt-4o for reliability)
 
         Returns:
             Synthesized answer
@@ -276,34 +276,41 @@ Context:
 
 Please provide a clear, well-structured answer."""
 
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            # GPT-5 uses reasoning tokens (like o1) - need much higher limit
-            # to allow for both reasoning AND the actual answer text
-            max_completion_tokens=8000
-        )
+        # Try with the specified model, fallback to gpt-4o if needed
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=4000,
+                temperature=0.7
+            )
+        except Exception as e:
+            if model != "gpt-4o":
+                print(f"Warning: Model {model} failed ({str(e)}), falling back to gpt-4o")
+                response = self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    max_completion_tokens=4000,
+                    temperature=0.7
+                )
+            else:
+                raise
 
-        # Debug: Print full response structure
-        print(f"[GPT-5 DEBUG] Response type: {type(response)}")
-        print(f"[GPT-5 DEBUG] Response model: {response.model if hasattr(response, 'model') else 'N/A'}")
-        print(f"[GPT-5 DEBUG] Choices count: {len(response.choices) if hasattr(response, 'choices') else 0}")
-
-        if response.choices:
-            choice = response.choices[0]
-            print(f"[GPT-5 DEBUG] Finish reason: {choice.finish_reason}")
-            print(f"[GPT-5 DEBUG] Message type: {type(choice.message)}")
-            print(f"[GPT-5 DEBUG] Message content: {choice.message.content}")
-            print(f"[GPT-5 DEBUG] Message content type: {type(choice.message.content)}")
+        # Debug: Print response info
+        print(f"[GPT DEBUG] Used model: {response.model if hasattr(response, 'model') else 'N/A'}")
+        print(f"[GPT DEBUG] Finish reason: {response.choices[0].finish_reason if response.choices else 'N/A'}")
 
         answer = response.choices[0].message.content
 
-        # Debug: Check if answer is None or empty
+        # Check if answer is None or empty
         if not answer:
-            print(f"WARNING: GPT-5 returned empty/None answer")
+            print(f"WARNING: GPT returned empty/None answer")
             return "Unable to generate answer - model returned empty response."
 
         return answer
