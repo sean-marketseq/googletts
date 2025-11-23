@@ -88,6 +88,9 @@ function App() {
   const [isPurging, setIsPurging] = useState(false);
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
 
+  // Quick insights visibility
+  const [showMoreQueries, setShowMoreQueries] = useState(false);
+
   // Polling intervals ref (now a Map)
   const pollingIntervalsRef = useRef<Map<string, number>>(new Map());
 
@@ -827,58 +830,7 @@ function App() {
                   Quick Insights
                 </label>
                 <div className="grid grid-cols-1 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handlePrebuiltQuery("What topics, questions, or intents cause the voice agent to fail or provide unhelpful responses? Identify patterns where users had to repeat themselves, expressed confusion, or asked to speak to a human. What knowledge gaps exist?")}
-                    disabled={isQuerying}
-                    className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
-                  >
-                    <div className="flex-shrink-0 mt-0.5">
-                      <svg className="w-5 h-5 text-red-400 group-hover:text-red-300" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-5a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-purple-100 mb-1">Agent Knowledge Gaps</div>
-                      <div className="text-xs text-purple-300">Find topics the voice agent fails to handle or misunderstands</div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handlePrebuiltQuery("What conversation patterns, emotional states, or specific issues trigger users to want escalation or express desire to speak with a human? What problems does the voice agent consistently fail to resolve?")}
-                    disabled={isQuerying}
-                    className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
-                  >
-                    <div className="flex-shrink-0 mt-0.5">
-                      <svg className="w-5 h-5 text-yellow-400 group-hover:text-yellow-300" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-purple-100 mb-1">Escalation Triggers</div>
-                      <div className="text-xs text-purple-300">Discover when users want human help and why the agent fails</div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handlePrebuiltQuery("Where do conversations derail or break down? Analyze points where users express confusion, frustration spikes, the agent misunderstands intent, or conversations require multiple clarification attempts. What response patterns correlate with negative outcomes?")}
-                    disabled={isQuerying}
-                    className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
-                  >
-                    <div className="flex-shrink-0 mt-0.5">
-                      <svg className="w-5 h-5 text-orange-400 group-hover:text-orange-300" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z" clipRule="evenodd"/>
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-purple-100 mb-1">Conversation Breakdowns</div>
-                      <div className="text-xs text-purple-300">Identify where and why conversations fail or go off-track</div>
-                    </div>
-                  </button>
-
-                  {/* MASTER ANALYSIS - Special shimmering button */}
+                  {/* MASTER ANALYSIS - Special shimmering button (always visible) */}
                   <button
                     type="button"
                     onClick={() => handlePrebuiltQuery(`You are an expert conversation analyst specializing in digital voice agent optimization.
@@ -987,6 +939,79 @@ ANALYSIS CONSTRAINTS:
                       <div className="text-xs text-yellow-200/95 drop-shadow-sm">Complete failure pattern analysis with deployment-ready system prompt improvements</div>
                     </div>
                   </button>
+
+                  {/* Toggle for more queries */}
+                  <button
+                    type="button"
+                    onClick={() => setShowMoreQueries(!showMoreQueries)}
+                    className="flex items-center justify-center gap-2 p-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-purple-400/30 rounded-lg transition-all text-purple-300 hover:text-purple-100 text-sm mt-2"
+                  >
+                    <svg
+                      className={`w-4 h-4 transition-transform ${showMoreQueries ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span>{showMoreQueries ? 'Hide' : 'Show'} More Queries</span>
+                  </button>
+
+                  {/* Collapsible additional queries */}
+                  {showMoreQueries && (
+                    <div className="grid grid-cols-1 gap-2 mt-2 animate-fadeIn">
+                      <button
+                        type="button"
+                        onClick={() => handlePrebuiltQuery("What topics, questions, or intents cause the voice agent to fail or provide unhelpful responses? Identify patterns where users had to repeat themselves, expressed confusion, or asked to speak to a human. What knowledge gaps exist?")}
+                        disabled={isQuerying}
+                        className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          <svg className="w-5 h-5 text-red-400 group-hover:text-red-300" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-5a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-purple-100 mb-1">Agent Knowledge Gaps</div>
+                          <div className="text-xs text-purple-300">Find topics the voice agent fails to handle or misunderstands</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handlePrebuiltQuery("What conversation patterns, emotional states, or specific issues trigger users to want escalation or express desire to speak with a human? What problems does the voice agent consistently fail to resolve?")}
+                        disabled={isQuerying}
+                        className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          <svg className="w-5 h-5 text-yellow-400 group-hover:text-yellow-300" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-purple-100 mb-1">Escalation Triggers</div>
+                          <div className="text-xs text-purple-300">Discover when users want human help and why the agent fails</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handlePrebuiltQuery("Where do conversations derail or break down? Analyze points where users express confusion, frustration spikes, the agent misunderstands intent, or conversations require multiple clarification attempts. What response patterns correlate with negative outcomes?")}
+                        disabled={isQuerying}
+                        className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          <svg className="w-5 h-5 text-orange-400 group-hover:text-orange-300" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z" clipRule="evenodd"/>
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-purple-100 mb-1">Conversation Breakdowns</div>
+                          <div className="text-xs text-purple-300">Identify where and why conversations fail or go off-track</div>
+                        </div>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
