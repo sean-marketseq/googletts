@@ -894,27 +894,45 @@ async def get_all_batches():
 @app.delete("/purge-index")
 async def purge_index():
     """
-    ⚠️ DANGER: Delete ALL data from Pinecone index
+    ⚠️ DANGER: Delete ALL data from Pinecone indices (conversations + emotions)
 
     This is for testing purposes only. Use with caution!
     """
     try:
         print("⚠️  PURGE REQUEST RECEIVED")
 
-        # Purge all data from Pinecone
-        pinecone_client.purge_all_data(namespace="conversations")
+        # Purge all data from both Pinecone indices
+        purge_results = pinecone_client.purge_all_data(namespace="conversations")
 
         # Clear in-memory batch storage
         batch_storage.clear()
 
+        # Check if any errors occurred
+        errors = []
+        if purge_results["conversations"] and "error" in purge_results["conversations"]:
+            errors.append(f"Conversations: {purge_results['conversations']}")
+        if purge_results["emotions"] and "error" in purge_results["emotions"]:
+            errors.append(f"Emotions: {purge_results['emotions']}")
+
+        if errors:
+            error_msg = "; ".join(errors)
+            print(f"⚠️  Purge completed with errors: {error_msg}")
+            return {
+                "message": "Purge completed with some errors",
+                "results": purge_results,
+                "batches_cleared": True,
+                "errors": errors
+            }
+
         return {
-            "message": "All data purged successfully",
-            "namespace": "conversations",
+            "message": "All data purged successfully from both indices",
+            "results": purge_results,
             "batches_cleared": True
         }
 
     except Exception as e:
         print(f"Error purging index: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to purge index: {str(e)}")
 
 

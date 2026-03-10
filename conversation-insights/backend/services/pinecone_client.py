@@ -253,17 +253,39 @@ class PineconeClient:
     def purge_all_data(self, namespace: str = "conversations"):
         """
         Delete ALL data from a namespace (use with caution!)
+        Now purges BOTH conversations and emotions indices.
 
         Args:
-            namespace: Pinecone namespace to purge
+            namespace: Pinecone namespace to purge (for conversations index)
         """
-        if not self.index:
-            raise ValueError("Index not initialized. Call setup_index() first.")
+        purge_results = {"conversations": None, "emotions": None}
 
-        print(f"⚠️  PURGING ALL DATA from namespace: {namespace}")
+        # Purge conversations index
+        try:
+            if not self.index:
+                raise ValueError("Conversations index not initialized. Call setup_index() first.")
 
-        # Delete all vectors in the namespace
-        self.index.delete(delete_all=True, namespace=namespace)
+            print(f"⚠️  PURGING conversations index, namespace: {namespace}")
+            self.index.delete(delete_all=True, namespace=namespace)
+            purge_results["conversations"] = "success"
+            print(f"✓ Conversations index purged from namespace: {namespace}")
+        except Exception as e:
+            print(f"✗ Error purging conversations index: {e}")
+            purge_results["conversations"] = f"error: {str(e)}"
 
-        print(f"✓ All data purged from namespace: {namespace}")
+        # Purge emotions index
+        try:
+            if self.emotion_index:
+                print(f"⚠️  PURGING emotions index, namespace: emotions")
+                self.emotion_index.delete(delete_all=True, namespace="emotions")
+                purge_results["emotions"] = "success"
+                print(f"✓ Emotions index purged from namespace: emotions")
+            else:
+                purge_results["emotions"] = "skipped: not initialized"
+                print(f"⚠️  Emotions index not initialized, skipping purge")
+        except Exception as e:
+            print(f"✗ Error purging emotions index: {e}")
+            purge_results["emotions"] = f"error: {str(e)}"
+
+        return purge_results
 
