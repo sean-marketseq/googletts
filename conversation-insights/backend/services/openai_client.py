@@ -154,17 +154,20 @@ class OpenAIBatchClient:
 
         return results
 
-    def create_embedding(self, text: str, model: str = "text-embedding-3-small") -> List[float]:
+    def create_embedding(self, text: str, model: str = None) -> List[float]:
         """
         Create a single embedding (for query processing)
 
         Args:
             text: Text to embed
-            model: Embedding model to use
+            model: Embedding model to use (defaults to env OPENAI_EMBEDDING_MODEL)
 
         Returns:
             Embedding vector (1024 dimensions)
         """
+        if model is None:
+            model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+
         response = self.client.embeddings.create(
             model=model,
             input=text,
@@ -172,17 +175,19 @@ class OpenAIBatchClient:
         )
         return response.data[0].embedding
 
-    def extract_conversation_data(self, text: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
+    def extract_conversation_data(self, text: str, model: str = None) -> Dict[str, Any]:
         """
         Extract structured data from conversation chunk using direct API call
 
         Args:
             text: Conversation text to analyze
-            model: Model to use for extraction
+            model: Model to use for extraction (defaults to env OPENAI_EXTRACTION_MODEL or gpt-5-mini)
 
         Returns:
             Dictionary with intents, entities, sentiment, action_items, compliance_flags
         """
+        if model is None:
+            model = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-5-mini")
         extraction_prompt = """Extract from this conversation chunk:
 - intents: list of customer intents (e.g., ["cancel_subscription", "request_discount"])
 - entities: list of {type, value} objects (e.g., [{"type": "product", "value": "subscription"}])
@@ -242,7 +247,7 @@ Conversation chunk:
                 "compliance_flags": []
             }
 
-    async def extract_conversation_data_async(self, text: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
+    async def extract_conversation_data_async(self, text: str, model: str = None) -> Dict[str, Any]:
         """
         Extract structured data from conversation chunk asynchronously
 
@@ -250,11 +255,14 @@ Conversation chunk:
 
         Args:
             text: Conversation text to analyze
-            model: Model to use for extraction
+            model: Model to use for extraction (defaults to env OPENAI_EXTRACTION_MODEL or gpt-5-mini)
 
         Returns:
             Dictionary with intents, entities, sentiment, action_items, compliance_flags
         """
+        if model is None:
+            model = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-5-mini")
+
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             None,  # Use default ThreadPoolExecutor
@@ -263,7 +271,7 @@ Conversation chunk:
             model
         )
 
-    async def extract_chunks_parallel(self, chunks: List[Dict[str, Any]], model: str = "gpt-4o-mini") -> List[Dict[str, Any]]:
+    async def extract_chunks_parallel(self, chunks: List[Dict[str, Any]], model: str = None) -> List[Dict[str, Any]]:
         """
         Extract data from multiple chunks in parallel using asyncio
 
@@ -272,12 +280,15 @@ Conversation chunk:
 
         Args:
             chunks: List of chunk dictionaries with 'text' and 'index' keys
-            model: Model to use for extraction
+            model: Model to use for extraction (defaults to env OPENAI_EXTRACTION_MODEL or gpt-5-mini)
 
         Returns:
             List of extraction results with chunk_id and data
         """
-        print(f"[PARALLEL] Extracting data from {len(chunks)} chunks in parallel...")
+        if model is None:
+            model = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-5-mini")
+
+        print(f"[PARALLEL] Extracting data from {len(chunks)} chunks in parallel using {model}...")
 
         # Create async tasks for all chunks
         tasks = [
@@ -303,18 +314,43 @@ Conversation chunk:
 
         return results
 
-    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5.1") -> str:
+    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = None) -> str:
         """
         Use GPT to synthesize an answer from retrieved chunks
 
         Args:
             query: User's question
             context_chunks: List of relevant conversation chunks
-            model: Model to use for synthesis (default: gpt-5.1)
+            model: Model to use for synthesis (defaults to env variables or auto-detects)
+                   - Standard queries: OPENAI_SYNTHESIS_MODEL (gpt-5.4)
+                   - Master Analysis: OPENAI_MASTER_ANALYSIS_MODEL (o3-deep-research)
 
         Returns:
             Synthesized answer
         """
+        # Smart model selection based on query type
+        if model is None:
+            # Auto-detect Master System Analysis queries for deep research mode
+            master_analysis_indicators = [
+                "master system analysis",
+                "comprehensive analysis",
+                "patterns across all",
+                "analyze all conversations",
+                "deployment-ready",
+                "strategic recommendations"
+            ]
+
+            is_master_analysis = (
+                len(query) > 800 or  # Long, complex queries
+                any(indicator in query.lower() for indicator in master_analysis_indicators)
+            )
+
+            if is_master_analysis:
+                model = os.getenv("OPENAI_MASTER_ANALYSIS_MODEL", "o3-deep-research")
+                print(f"🔬 [DEEP RESEARCH MODE] Using {model} for Master Analysis")
+            else:
+                model = os.getenv("OPENAI_SYNTHESIS_MODEL", "gpt-5.4")
+                print(f"💬 [STANDARD MODE] Using {model} for synthesis")
         # Format context
         context_text = "\n\n---\n\n".join([
             f"Conversation {chunk.get('conversation_id', 'unknown')} (Date: {chunk.get('date', 'unknown')}):\n{chunk.get('text', '')}"
@@ -339,10 +375,17 @@ Context:
 
 Please provide a clear, well-structured answer."""
 
-        # Try with the specified model, fallback to gpt-4o if needed
+        # Try with the specified model, fallback if needed
         try:
-            # GPT-5 models may need higher token limits for reasoning
-            token_limit = 8000 if "gpt-5" in model else 4000
+            # Set token limits based on model type
+            # o3-deep-research needs MORE tokens for deep analysis
+            # GPT-5.4 also benefits from higher limits
+            if "o3-deep-research" in model or "o3" in model:
+                token_limit = 16000  # Deep research needs lots of tokens
+            elif "gpt-5" in model:
+                token_limit = 8000   # GPT-5 models
+            else:
+                token_limit = 4000   # Fallback
 
             response = self.client.chat.completions.create(
                 model=model,
@@ -353,15 +396,17 @@ Please provide a clear, well-structured answer."""
                 max_completion_tokens=token_limit
             )
         except Exception as e:
-            if model != "gpt-4o":
-                print(f"Warning: Model {model} failed ({str(e)}), falling back to gpt-4o")
+            # Fallback to gpt-5.4 if the requested model fails
+            if model not in ["gpt-5.4", "gpt-4o"]:
+                fallback_model = "gpt-5.4"
+                print(f"⚠️ Warning: Model {model} failed ({str(e)}), falling back to {fallback_model}")
                 response = self.client.chat.completions.create(
-                    model="gpt-4o",
+                    model=fallback_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    max_completion_tokens=4000
+                    max_completion_tokens=8000
                 )
             else:
                 raise
