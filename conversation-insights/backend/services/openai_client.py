@@ -6,6 +6,8 @@ from typing import List, Dict, Any, BinaryIO
 import json
 import tempfile
 from openai import OpenAI
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 
 class OpenAIBatchClient:
@@ -240,14 +242,75 @@ Conversation chunk:
                 "compliance_flags": []
             }
 
-    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5-2025-08-07") -> str:
+    async def extract_conversation_data_async(self, text: str, model: str = "gpt-4o-mini") -> Dict[str, Any]:
+        """
+        Extract structured data from conversation chunk asynchronously
+
+        This runs the blocking OpenAI call in a thread pool to avoid blocking the event loop
+
+        Args:
+            text: Conversation text to analyze
+            model: Model to use for extraction
+
+        Returns:
+            Dictionary with intents, entities, sentiment, action_items, compliance_flags
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,  # Use default ThreadPoolExecutor
+            self.extract_conversation_data,
+            text,
+            model
+        )
+
+    async def extract_chunks_parallel(self, chunks: List[Dict[str, Any]], model: str = "gpt-4o-mini") -> List[Dict[str, Any]]:
+        """
+        Extract data from multiple chunks in parallel using asyncio
+
+        This is the KEY OPTIMIZATION for Tier 1 - processing all chunks concurrently
+        instead of sequentially
+
+        Args:
+            chunks: List of chunk dictionaries with 'text' and 'index' keys
+            model: Model to use for extraction
+
+        Returns:
+            List of extraction results with chunk_id and data
+        """
+        print(f"[PARALLEL] Extracting data from {len(chunks)} chunks in parallel...")
+
+        # Create async tasks for all chunks
+        tasks = [
+            self.extract_conversation_data_async(chunk["text"], model)
+            for chunk in chunks
+        ]
+
+        # Run all extractions in parallel
+        import time
+        start = time.time()
+        extractions = await asyncio.gather(*tasks)
+        elapsed = time.time() - start
+
+        print(f"[PARALLEL] Completed {len(chunks)} extractions in {elapsed:.2f}s ({elapsed/len(chunks):.2f}s per chunk)")
+
+        # Format results
+        results = []
+        for i, chunk in enumerate(chunks):
+            results.append({
+                "chunk_id": f"chunk_{chunk['index']}",
+                "data": extractions[i]
+            })
+
+        return results
+
+    def synthesize_answer(self, query: str, context_chunks: List[Dict[str, Any]], model: str = "gpt-5.1") -> str:
         """
         Use GPT to synthesize an answer from retrieved chunks
 
         Args:
             query: User's question
             context_chunks: List of relevant conversation chunks
-            model: Model to use for synthesis
+            model: Model to use for synthesis (default: gpt-5.1)
 
         Returns:
             Synthesized answer
@@ -276,34 +339,42 @@ Context:
 
 Please provide a clear, well-structured answer."""
 
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            # GPT-5 uses reasoning tokens (like o1) - need much higher limit
-            # to allow for both reasoning AND the actual answer text
-            max_completion_tokens=8000
-        )
+        # Try with the specified model, fallback to gpt-4o if needed
+        try:
+            # GPT-5 models may need higher token limits for reasoning
+            token_limit = 8000 if "gpt-5" in model else 4000
 
-        # Debug: Print full response structure
-        print(f"[GPT-5 DEBUG] Response type: {type(response)}")
-        print(f"[GPT-5 DEBUG] Response model: {response.model if hasattr(response, 'model') else 'N/A'}")
-        print(f"[GPT-5 DEBUG] Choices count: {len(response.choices) if hasattr(response, 'choices') else 0}")
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=token_limit
+            )
+        except Exception as e:
+            if model != "gpt-4o":
+                print(f"Warning: Model {model} failed ({str(e)}), falling back to gpt-4o")
+                response = self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    max_completion_tokens=4000
+                )
+            else:
+                raise
 
-        if response.choices:
-            choice = response.choices[0]
-            print(f"[GPT-5 DEBUG] Finish reason: {choice.finish_reason}")
-            print(f"[GPT-5 DEBUG] Message type: {type(choice.message)}")
-            print(f"[GPT-5 DEBUG] Message content: {choice.message.content}")
-            print(f"[GPT-5 DEBUG] Message content type: {type(choice.message.content)}")
+        # Debug: Print response info
+        print(f"[GPT DEBUG] Used model: {response.model if hasattr(response, 'model') else 'N/A'}")
+        print(f"[GPT DEBUG] Finish reason: {response.choices[0].finish_reason if response.choices else 'N/A'}")
 
         answer = response.choices[0].message.content
 
-        # Debug: Check if answer is None or empty
+        # Check if answer is None or empty
         if not answer:
-            print(f"WARNING: GPT-5 returned empty/None answer")
+            print(f"WARNING: GPT returned empty/None answer")
             return "Unable to generate answer - model returned empty response."
 
         return answer
@@ -353,8 +424,7 @@ Please provide a clear, well-structured answer."""
         response = self.client.audio.transcriptions.create(
             model="whisper-1",
             file=(filename, audio_file),
-            response_format="verbose_json",
-            timestamp_granularities=["segment"]
+            response_format="verbose_json"
         )
 
         # Get full transcript

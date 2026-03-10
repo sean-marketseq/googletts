@@ -67,7 +67,7 @@ interface Source {
   intents: string[];
 }
 
-const MAX_CONCURRENT_UPLOADS = 2; // Process 2 files at a time
+const MAX_CONCURRENT_UPLOADS = 20; // TIER 1 OPTIMIZATION: Increased from 2 to 20 for parallel processing
 
 function App() {
   // Upload state
@@ -82,10 +82,14 @@ function App() {
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [queryError, setQueryError] = useState<string>('');
   const [isQuerying, setIsQuerying] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Purge state
   const [isPurging, setIsPurging] = useState(false);
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
+
+  // Quick insights visibility
+  const [showMoreQueries, setShowMoreQueries] = useState(false);
 
   // Polling intervals ref (now a Map)
   const pollingIntervalsRef = useRef<Map<string, number>>(new Map());
@@ -201,11 +205,35 @@ function App() {
 
     } catch (error: any) {
       console.error('Upload error:', error);
+
+      // Capture detailed error information
+      let errorMessage = 'Failed to upload audio file';
+
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.response?.data) {
+        errorMessage = JSON.stringify(error.response.data);
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      // Add HTTP status if available
+      if (error.response?.status) {
+        errorMessage = `[${error.response.status}] ${errorMessage}`;
+      }
+
+      console.error('Full error details for', fileStatus?.file.name, ':', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      });
+
       setFileStatuses(prev => prev.map(fs =>
         fs.id === fileId ? {
           ...fs,
           status: 'error' as const,
-          error: error.response?.data?.detail || 'Failed to upload audio file'
+          error: errorMessage
         } : fs
       ));
 
@@ -383,6 +411,46 @@ function App() {
     }
   };
 
+  // Handle copy to clipboard
+  const handleCopyAnswer = async () => {
+    if (!queryResult?.answer) return;
+
+    try {
+      await navigator.clipboard.writeText(queryResult.answer);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+    }
+  };
+
+  // Handle pre-built query
+  const handlePrebuiltQuery = (prebuiltQuery: string) => {
+    setQuery(prebuiltQuery);
+    setQueryError('');
+    setQueryResult(null);
+
+    // Auto-submit the query
+    setTimeout(async () => {
+      setIsQuerying(true);
+      setQueryError('');
+
+      try {
+        const response = await conversationApi.query({
+          query: prebuiltQuery.trim(),
+          top_k: 50
+        });
+
+        setQueryResult(response);
+      } catch (error: any) {
+        console.error('Query error:', error);
+        setQueryError(error.response?.data?.detail || 'Failed to process query');
+      } finally {
+        setIsQuerying(false);
+      }
+    }, 100);
+  };
+
   // Toggle details expansion
   const toggleDetails = (fileId: string) => {
     setExpandedDetails(prev => {
@@ -545,7 +613,10 @@ function App() {
                               <p className="text-xs text-purple-400 mt-1">ID: {fs.conversationId}</p>
                             )}
                             {fs.error && (
-                              <p className="text-xs text-red-300 mt-1">{fs.error}</p>
+                              <div className="mt-1 p-2 bg-red-500/20 border border-red-400/30 rounded">
+                                <p className="text-xs text-red-300 font-semibold">Error:</p>
+                                <p className="text-xs text-red-200 mt-1 whitespace-pre-wrap break-words">{fs.error}</p>
+                              </div>
                             )}
                           </div>
 
@@ -753,9 +824,200 @@ function App() {
             </p>
 
             <form onSubmit={handleQuery} className="space-y-6">
-              <div>
+              {/* Pre-built Queries */}
+              <div className="space-y-3">
                 <label className="block text-sm font-semibold text-purple-200 mb-3">
-                  Your Question
+                  Quick Insights
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  {/* MASTER ANALYSIS - Special shimmering button (always visible) */}
+                  <button
+                    type="button"
+                    onClick={() => handlePrebuiltQuery(`You are an expert conversation analyst specializing in digital voice agent optimization.
+Analyze the provided conversation transcripts to identify failure patterns and generate precise system improvements.
+
+INPUT: [Raw conversation transcripts from Pinecone query results]
+
+REQUIRED ANALYSIS STRUCTURE:
+
+## PART 1: PATTERN IDENTIFICATION
+For each conversation, extract:
+1. Conversation ID
+2. Breakdown trigger (exact user utterance that started the failure)
+3. Bot response pattern that failed
+4. Number of turns until resolution or abandonment
+5. Final outcome (resolved/transferred/abandoned)
+
+Group conversations by failure pattern. Focus on:
+- Transfer request friction (unnecessary confirmations)
+- Order/ID reference failures (ignoring specific inputs)
+- Ambiguous input handling (vocabulary mismatch)
+- Emotional escalation points
+- Silent user recovery failures
+- Meta-request misunderstandings
+
+## PART 2: BEHAVIORAL SIGNATURES
+For each pattern group, identify:
+- Exact bot phrases that correlate with failure
+- User vocabulary that gets misinterpreted
+- Number of redundant turns before resolution
+- Specific data points that get ignored (order IDs, phone numbers)
+
+## PART 3: SYSTEM PROMPT IMPROVEMENTS
+Generate Python-formatted prompt updates for each identified pattern:
+
+Include for each pattern:
+- DETECTION_TRIGGER: Specific conditions to detect this pattern
+- CURRENT_BEHAVIOR: What the bot currently does wrong
+- CORRECTED_BEHAVIOR: Exact new response template, state management rules, forbidden phrases to eliminate
+- EXAMPLE: Show actual user quote, actual bot failure, and improved response
+- IMPLEMENTATION: Precise if/then logic with exact templates and data structures
+
+## PART 4: IMPACT METRICS
+For each improvement, estimate:
+- Transfer rate reduction (based on similar patterns that led to transfers)
+- AHT reduction (seconds saved by eliminating loops)
+- Containment improvement (% of convos that could stay automated)
+- CSAT improvement (based on friction points removed)
+
+## PART 5: IMPLEMENTATION PRIORITY
+Rank improvements by:
+1. Frequency (how often pattern occurs)
+2. Impact (how severely it affects outcomes)
+3. Implementation ease (simple prompt change vs. system change)
+
+OUTPUT FORMAT:
+
+# Conversation Analysis: Critical Breakdown Patterns & System Prompt Improvements
+
+## Pattern 1: [Name]
+**Frequency:** [X occurrences in sample]
+**Impact:** [High/Medium/Low]
+
+### Example Conversations:
+- [conv_id]: [Brief description of failure]
+- [conv_id]: [Brief description of failure]
+
+### Precise System Prompt Implementation:
+[Ready-to-deploy code block with specific prompts, rules, and templates]
+
+### Expected Impact:
+- Metric 1: [Specific improvement]
+- Metric 2: [Specific improvement]
+
+[Continue for all patterns...]
+
+## Master Control Rules:
+[Global rules that apply across all patterns in code format]
+
+## Quick Implementation Wins:
+[Top 3 changes that can be deployed immediately]
+
+ANALYSIS CONSTRAINTS:
+- Only cite actual conversation IDs and quotes from the data
+- Every improvement must reference specific transcript failures
+- Code blocks must be deployment-ready, not pseudo-code
+- Focus on patterns that appear 3+ times in the dataset
+- Prioritize fixes that eliminate entire conversation turns
+- Include EXACT response templates that can be copied directly into production
+- Specify FORBIDDEN phrases that should never appear
+- Define precise STATE management rules for data capture
+- Show BEFORE/AFTER examples using real transcript excerpts`)}
+                    disabled={isQuerying}
+                    className="shimmer-button flex items-start gap-3 p-4 relative overflow-hidden rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group shadow-2xl border-2 border-yellow-400/50 hover:border-yellow-300/70 hover:shadow-yellow-500/25 transform hover:scale-[1.02]"
+                  >
+                    <div className="flex-shrink-0 mt-0.5 z-10">
+                      <svg className="w-6 h-6 text-yellow-300 group-hover:text-yellow-200 drop-shadow-lg animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0 z-10">
+                      <div className="text-sm font-bold text-yellow-100 mb-1 flex items-center gap-2 drop-shadow">
+                        Master System Analysis
+                        <span className="text-xs px-2 py-0.5 bg-yellow-400/40 text-yellow-100 rounded-full font-semibold border border-yellow-300/30">ADVANCED</span>
+                      </div>
+                      <div className="text-xs text-yellow-200/95 drop-shadow-sm">Complete failure pattern analysis with deployment-ready system prompt improvements</div>
+                    </div>
+                  </button>
+
+                  {/* Toggle for more queries */}
+                  <button
+                    type="button"
+                    onClick={() => setShowMoreQueries(!showMoreQueries)}
+                    className="flex items-center justify-center gap-2 p-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-purple-400/30 rounded-lg transition-all text-purple-300 hover:text-purple-100 text-sm mt-2"
+                  >
+                    <svg
+                      className={`w-4 h-4 transition-transform ${showMoreQueries ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span>{showMoreQueries ? 'Hide' : 'Show'} More Queries</span>
+                  </button>
+
+                  {/* Collapsible additional queries */}
+                  {showMoreQueries && (
+                    <div className="grid grid-cols-1 gap-2 mt-2 animate-fadeIn">
+                      <button
+                        type="button"
+                        onClick={() => handlePrebuiltQuery("What topics, questions, or intents cause the voice agent to fail or provide unhelpful responses? Identify patterns where users had to repeat themselves, expressed confusion, or asked to speak to a human. What knowledge gaps exist?")}
+                        disabled={isQuerying}
+                        className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          <svg className="w-5 h-5 text-red-400 group-hover:text-red-300" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-5a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-purple-100 mb-1">Agent Knowledge Gaps</div>
+                          <div className="text-xs text-purple-300">Find topics the voice agent fails to handle or misunderstands</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handlePrebuiltQuery("What conversation patterns, emotional states, or specific issues trigger users to want escalation or express desire to speak with a human? What problems does the voice agent consistently fail to resolve?")}
+                        disabled={isQuerying}
+                        className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          <svg className="w-5 h-5 text-yellow-400 group-hover:text-yellow-300" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-purple-100 mb-1">Escalation Triggers</div>
+                          <div className="text-xs text-purple-300">Discover when users want human help and why the agent fails</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handlePrebuiltQuery("Where do conversations derail or break down? Analyze points where users express confusion, frustration spikes, the agent misunderstands intent, or conversations require multiple clarification attempts. What response patterns correlate with negative outcomes?")}
+                        disabled={isQuerying}
+                        className="flex items-start gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-purple-400/50 rounded-lg transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          <svg className="w-5 h-5 text-orange-400 group-hover:text-orange-300" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z" clipRule="evenodd"/>
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-purple-100 mb-1">Conversation Breakdowns</div>
+                          <div className="text-xs text-purple-300">Identify where and why conversations fail or go off-track</div>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <label className="block text-sm font-semibold text-purple-200 mb-3">
+                  Or Ask Your Own Question
                 </label>
                 <textarea
                   value={query}
@@ -801,12 +1063,36 @@ function App() {
                 <div className="space-y-4 animate-fadeIn">
                   {/* Answer */}
                   <div className="p-6 bg-green-500/20 border border-green-400/30 rounded-xl">
-                    <h3 className="font-bold text-green-100 mb-3 text-lg flex items-center">
-                      <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd"/>
-                      </svg>
-                      Answer
-                    </h3>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-bold text-green-100 text-lg flex items-center">
+                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd"/>
+                        </svg>
+                        Answer
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={handleCopyAnswer}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-green-500/30 hover:bg-green-500/50 text-green-100 rounded-lg transition-colors text-sm font-medium"
+                        title="Copy to clipboard"
+                      >
+                        {copied ? (
+                          <>
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                            </svg>
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <p className="text-green-50 whitespace-pre-wrap leading-relaxed">
                       {queryResult.answer}
                     </p>
@@ -960,6 +1246,45 @@ function App() {
         }
         .animate-fadeIn {
           animation: fadeIn 0.5s ease-out;
+        }
+
+        /* Shimmer effect for Master Analysis button */
+        @keyframes shimmer {
+          0% {
+            background-position: -1000px 0;
+          }
+          100% {
+            background-position: 1000px 0;
+          }
+        }
+
+        .shimmer-button {
+          background: linear-gradient(
+            110deg,
+            rgba(251, 191, 36, 0.15) 0%,
+            rgba(251, 191, 36, 0.25) 25%,
+            rgba(252, 211, 77, 0.35) 35%,
+            rgba(253, 224, 71, 0.5) 45%,
+            rgba(252, 211, 77, 0.35) 55%,
+            rgba(251, 191, 36, 0.25) 65%,
+            rgba(251, 191, 36, 0.15) 100%
+          );
+          background-size: 2000px 100%;
+          animation: shimmer 3s linear infinite;
+        }
+
+        .shimmer-button:hover {
+          animation: shimmer 1.5s linear infinite;
+          background: linear-gradient(
+            110deg,
+            rgba(251, 191, 36, 0.2) 0%,
+            rgba(251, 191, 36, 0.3) 25%,
+            rgba(252, 211, 77, 0.4) 35%,
+            rgba(253, 224, 71, 0.6) 45%,
+            rgba(252, 211, 77, 0.4) 55%,
+            rgba(251, 191, 36, 0.3) 65%,
+            rgba(251, 191, 36, 0.2) 100%
+          );
         }
       `}</style>
     </div>

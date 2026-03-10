@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 import json
 import os
 from dotenv import load_dotenv
+import random
 
 from services.processor import chunk_text, create_batch_requests, parse_batch_results
 from services.openai_client import OpenAIBatchClient
@@ -19,6 +20,10 @@ import traceback
 
 # Load environment variables
 load_dotenv()
+
+# Hume sampling rate (0.0 to 1.0) - default 10% to reduce costs
+HUME_SAMPLING_RATE = float(os.getenv("HUME_SAMPLING_RATE", "0.1"))
+print(f"[CONFIG] Hume sampling rate: {HUME_SAMPLING_RATE * 100}%")
 
 # Initialize FastAPI app
 app = FastAPI(title="Conversation Insights API")
@@ -235,47 +240,77 @@ async def upload_audio(
 
         # Read audio content
         audio_content = await file.read()
+        file_size_mb = len(audio_content) / (1024 * 1024)
+        print(f"File size: {file_size_mb:.2f} MB")
 
         # === STEP 1: Transcribe with diarization ===
-        diarization = openai_client.transcribe_audio_with_diarization(
-            io.BytesIO(audio_content),
-            file.filename
-        )
+        try:
+            print(f"Starting transcription for {file.filename}...")
+            diarization = openai_client.transcribe_audio_with_diarization(
+                io.BytesIO(audio_content),
+                file.filename
+            )
+            print(f"Transcription successful: {len(diarization.get('segments', []))} segments")
+        except Exception as e:
+            print(f"ERROR: Transcription failed for {file.filename}: {type(e).__name__}: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Transcription failed: {type(e).__name__}: {str(e)}"
+            )
+
         speaker_labels, labeling_confidence = openai_client.label_speakers_as_agent_caller(
             diarization["segments"]
         )
 
         print(f"Speaker labeling: {speaker_labels} (confidence: {labeling_confidence})")
 
-        # === STEP 2: Submit to Hume (with error handling) ===
+        # === STEP 2: Submit to Hume (with random sampling for cost reduction) ===
         hume_job_id = None
-        try:
-            hume_callback_url = os.getenv("HUME_CALLBACK_URL")
-            hume_job_id = hume_client.submit_audio(
-                io.BytesIO(audio_content),
-                file.filename,
-                callback_url=hume_callback_url
-            )
-            print(f"Hume job submitted: {hume_job_id}")
-        except Exception as e:
-            print(f"Warning: Hume submission failed: {e}")
-            print("Continuing with OpenAI processing only...")
+        use_hume = random.random() < HUME_SAMPLING_RATE
+
+        if use_hume:
+            try:
+                hume_callback_url = os.getenv("HUME_CALLBACK_URL")
+                hume_job_id = hume_client.submit_audio(
+                    io.BytesIO(audio_content),
+                    file.filename,
+                    callback_url=hume_callback_url
+                )
+                print(f"[HUME] Job submitted: {hume_job_id} (sampled: {HUME_SAMPLING_RATE * 100}%)")
+            except Exception as e:
+                print(f"[HUME] Warning: Submission failed: {e}")
+                print("Continuing with OpenAI processing only...")
+        else:
+            print(f"[HUME] Skipped for cost savings (sampling rate: {HUME_SAMPLING_RATE * 100}%)")
 
         # === STEP 3: Chunk transcript ===
         transcript = diarization["full_transcript"]
         chunks = chunk_text(transcript, max_tokens=1500, overlap=200)
         print(f"Created {len(chunks)} chunks")
 
-        # === STEP 4: Extract data from chunks synchronously (FAST - direct API calls) ===
-        print(f"Extracting data from {len(chunks)} chunks...")
-        extraction_results = []
-        for chunk in chunks:
-            extracted = openai_client.extract_conversation_data(chunk["text"])
-            extraction_results.append({
-                "chunk_id": f"{conversation_id}_chunk_{chunk['index']}",
-                "data": extracted
-            })
-        print(f"Extraction complete for {len(chunks)} chunks")
+        # === STEP 4: Extract data from chunks IN PARALLEL (TIER 1 OPTIMIZATION) ===
+        print(f"[OPTIMIZATION] Extracting data from {len(chunks)} chunks in parallel...")
+        try:
+            # Use new parallel extraction method
+            extraction_results = await openai_client.extract_chunks_parallel(chunks)
+
+            # Add conversation_id to each result
+            for result in extraction_results:
+                result["chunk_id"] = f"{conversation_id}_chunk_{result['chunk_id'].split('_')[-1]}"
+
+            print(f"[OPTIMIZATION] Parallel extraction complete for {len(chunks)} chunks")
+        except Exception as e:
+            print(f"ERROR: Parallel extraction failed: {type(e).__name__}: {str(e)}")
+            # Fallback to sequential if parallel fails
+            print("Falling back to sequential extraction...")
+            extraction_results = []
+            for chunk in chunks:
+                extracted = openai_client.extract_conversation_data(chunk["text"])
+                extraction_results.append({
+                    "chunk_id": f"{conversation_id}_chunk_{chunk['index']}",
+                    "data": extracted
+                })
+            print(f"Sequential extraction complete for {len(chunks)} chunks")
 
         # === STEP 5: Create embedding batch requests (only embeddings now) ===
         batch_requests = create_batch_requests(
@@ -752,22 +787,33 @@ async def query_conversations(request: QueryRequest):
         print(f"Processing query: {request.query}")
 
         # Step 1: Create query embedding
-        query_embedding = openai_client.create_embedding(request.query)
+        try:
+            print(f"Creating embedding for query...")
+            query_embedding = openai_client.create_embedding(request.query)
+            print(f"Embedding created: {len(query_embedding)} dimensions")
+        except Exception as e:
+            print(f"ERROR: Failed to create embedding: {type(e).__name__}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
 
         # Step 2: Search Pinecone
-        matches = pinecone_client.query(
-            embedding=query_embedding,
-            top_k=request.top_k,
-            filter=request.filters,
-            namespace="conversations",
-            include_metadata=True
-        )
-
-        print(f"Found {len(matches)} matches")
+        try:
+            print(f"Searching Pinecone for top {request.top_k} matches...")
+            matches = pinecone_client.query(
+                embedding=query_embedding,
+                top_k=request.top_k,
+                filter=request.filters,
+                namespace="conversations",
+                include_metadata=True
+            )
+            print(f"Found {len(matches)} matches")
+        except Exception as e:
+            print(f"ERROR: Pinecone query failed: {type(e).__name__}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
         if not matches:
+            print(f"No matches found - index might be empty")
             return QueryResponse(
-                answer="No relevant conversations found for your query.",
+                answer="No relevant conversations found for your query. Make sure files have finished processing and are stored in the index.",
                 sources=[],
                 processing_time_ms=(time.time() - start_time) * 1000
             )
@@ -777,10 +823,17 @@ async def query_conversations(request: QueryRequest):
         context_chunks = [match["metadata"] for match in top_matches]
 
         # Synthesize answer with GPT
-        answer = openai_client.synthesize_answer(
-            query=request.query,
-            context_chunks=context_chunks
-        )
+        try:
+            print(f"Synthesizing answer with GPT from {len(context_chunks)} chunks...")
+            answer = openai_client.synthesize_answer(
+                query=request.query,
+                context_chunks=context_chunks
+            )
+            print(f"Answer synthesized: {len(answer)} characters")
+        except Exception as e:
+            print(f"ERROR: GPT synthesis failed: {type(e).__name__}: {str(e)}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Answer generation failed: {str(e)}")
 
         # Format sources
         sources = []
@@ -841,27 +894,45 @@ async def get_all_batches():
 @app.delete("/purge-index")
 async def purge_index():
     """
-    ⚠️ DANGER: Delete ALL data from Pinecone index
+    ⚠️ DANGER: Delete ALL data from Pinecone indices (conversations + emotions)
 
     This is for testing purposes only. Use with caution!
     """
     try:
         print("⚠️  PURGE REQUEST RECEIVED")
 
-        # Purge all data from Pinecone
-        pinecone_client.purge_all_data(namespace="conversations")
+        # Purge all data from both Pinecone indices
+        purge_results = pinecone_client.purge_all_data(namespace="conversations")
 
         # Clear in-memory batch storage
         batch_storage.clear()
 
+        # Check if any errors occurred
+        errors = []
+        if purge_results["conversations"] and "error" in purge_results["conversations"]:
+            errors.append(f"Conversations: {purge_results['conversations']}")
+        if purge_results["emotions"] and "error" in purge_results["emotions"]:
+            errors.append(f"Emotions: {purge_results['emotions']}")
+
+        if errors:
+            error_msg = "; ".join(errors)
+            print(f"⚠️  Purge completed with errors: {error_msg}")
+            return {
+                "message": "Purge completed with some errors",
+                "results": purge_results,
+                "batches_cleared": True,
+                "errors": errors
+            }
+
         return {
-            "message": "All data purged successfully",
-            "namespace": "conversations",
+            "message": "All data purged successfully from both indices",
+            "results": purge_results,
             "batches_cleared": True
         }
 
     except Exception as e:
         print(f"Error purging index: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to purge index: {str(e)}")
 
 
